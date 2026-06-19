@@ -1,20 +1,31 @@
 import cv2
 import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 import supervision as sv
 from ultralytics import YOLO
-from src.types import FrameData, TrackedPerson
-from src.config import YOLO_MODEL_PATH, PERSON_CONF_THRESHOLD, REID_COSINE_SIMILARITY_THRESHOLD
+from src.pipeline_types import FrameData, TrackedPerson
+import src.config as config
+
+# Try importing PyTorch for advanced Re-ID features
+try:
+    import torch
+    import torchvision.transforms as T
+    import torchvision.models as models
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
 
 class PersonTracker:
     def __init__(self, use_mock: bool = False):
         """
         Manages person detection, temporal tracking, and Re-Identification.
+        Uses a pre-trained CNN (MobileNetV3) for semantic Re-ID embeddings.
+        Falls back to spatial HSV color histograms if PyTorch is unavailable or fails.
         """
         self.use_mock = use_mock
         if not use_mock:
-            print(f"[Tracker] Initializing YOLO model: {YOLO_MODEL_PATH}")
-            self.model = YOLO(YOLO_MODEL_PATH)
+            print(f"[Tracker] Initializing YOLO model: {config.YOLO_MODEL_PATH}")
+            self.model = YOLO(config.YOLO_MODEL_PATH)
             self.tracker = sv.ByteTrack()
             
             # Re-ID database: maps persistent_id -> list of visual embeddings
@@ -25,6 +36,35 @@ class PersonTracker:
             
             # Running counter for new unique people
             self.next_persistent_id = 1
+            
+            # Initialize MobileNetV3 CNN Re-ID model
+            self.reid_model = None
+            if HAS_TORCH:
+                try:
+                    print("[Tracker] Loading MobileNetV3 Re-ID feature extractor (ImageNet weights)...")
+                    # Load model
+                    full_model = models.mobilenet_v3_small(weights='DEFAULT')
+                    # Use only the feature extractor layers
+                    self.reid_model = full_model.features
+                    self.reid_model.eval()
+                    
+                    # Select GPU if available, CPU is very fast for single crops
+                    self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                    self.reid_model.to(self.device)
+                    
+                    # Define ImageNet standard preprocessing transforms
+                    self.transform = T.Compose([
+                        T.ToPILImage(),
+                        T.Resize((224, 224)),
+                        T.ToTensor(),
+                        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                    ])
+                    print(f"[Tracker] Re-ID CNN loaded successfully on device: {self.device}")
+                except Exception as e:
+                    print(f"[Tracker] Error initializing CNN model: {e}. Falling back to Spatial Color Histograms.")
+                    self.reid_model = None
+            else:
+                print("[Tracker] PyTorch/Torchvision unavailable. Falling back to Spatial Color Histograms.")
         else:
             print("[Tracker] Running in MOCK mode.")
             self.model = None
@@ -33,26 +73,80 @@ class PersonTracker:
 
     def _extract_embedding(self, crop: np.ndarray) -> np.ndarray:
         """
-        Extracts a color-histogram signature vector from the cropped image.
-        This serves as a fast, light Re-ID model.
-        In a real production pipeline, you'd replace this with a deep learning
-        ReID embedding model (e.g. fast-reid, torchreid, or OSNet).
+        Extracts a feature descriptor vector from the crop.
+        Combines Semantic CNN features (shape/texture) with Spatial HSV features (color).
         """
+        dim_cnn = 576 if self.reid_model is not None else 0
+        dim_hsv = 192
+        
         if crop.size == 0:
-            return np.zeros(64, dtype=np.float32)
+            return np.zeros(dim_cnn + dim_hsv, dtype=np.float32)
+
+        # --- Method A: Deep Learning CNN Embeddings (Shape/Texture) ---
+        vector_cnn = None
+        if self.reid_model is not None:
+            try:
+                rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                tensor = self.transform(rgb_crop).unsqueeze(0).to(self.device)
+                with torch.no_grad():
+                    features = self.reid_model(tensor)
+                    pooled = torch.nn.functional.adaptive_avg_pool2d(features, 1)
+                    vector_cnn = pooled.flatten().cpu().numpy()
+                norm = np.linalg.norm(vector_cnn)
+                if norm > 0:
+                    vector_cnn = vector_cnn / norm
+            except Exception:
+                vector_cnn = np.zeros(dim_cnn, dtype=np.float32)
+        else:
+            vector_cnn = np.array([], dtype=np.float32)
+
+        # --- Method B: Spatial HSV Histogram (Color) ---
+        h, w = crop.shape[:2]
+        xmin_c = int(w * 0.2)
+        xmax_c = int(w * 0.8)
+        center_crop = crop[:, xmin_c:max(xmin_c + 1, xmax_c)]
+        
+        hsv = cv2.cvtColor(center_crop, cv2.COLOR_BGR2HSV)
+        ch, cw = hsv.shape[:2]
+        
+        top_split = int(ch * 0.3)
+        bottom_split = int(ch * 0.7)
+        
+        zones = [
+            hsv[0:top_split, :],
+            hsv[top_split:bottom_split, :],
+            hsv[bottom_split:ch, :]
+        ]
+        
+        hist_parts = []
+        for zone in zones:
+            if zone.size == 0:
+                hist_parts.append(np.zeros(64, dtype=np.float32))
+                continue
+            hist_h = cv2.calcHist([zone], [0], None, [32], [0, 180])
+            hist_s = cv2.calcHist([zone], [1], None, [16], [0, 256])
+            hist_v = cv2.calcHist([zone], [2], None, [16], [0, 256])
             
-        # Convert crop to HSV to be more robust to minor lighting changes
-        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-        
-        # Calculate histograms for H, S, and V channels
-        hist_h = cv2.calcHist([hsv], [0], None, [32], [0, 180])
-        hist_s = cv2.calcHist([hsv], [1], None, [16], [0, 256])
-        hist_v = cv2.calcHist([hsv], [2], None, [16], [0, 256])
-        
-        # Concatenate and normalize
-        hist = np.concatenate([hist_h, hist_s, hist_v]).flatten()
-        cv2.normalize(hist, hist)
-        return hist
+            zone_hist = np.concatenate([hist_h, hist_s, hist_v]).flatten()
+            norm = np.linalg.norm(zone_hist)
+            if norm > 0:
+                zone_hist = zone_hist / norm
+            hist_parts.append(zone_hist)
+            
+        vector_hsv = np.concatenate(hist_parts)
+        full_norm = np.linalg.norm(vector_hsv)
+        if full_norm > 0:
+            vector_hsv = vector_hsv / full_norm
+            
+        # --- Unify ---
+        if vector_cnn.size > 0:
+            unified = np.concatenate([vector_cnn, vector_hsv])
+            unified_norm = np.linalg.norm(unified)
+            if unified_norm > 0:
+                unified = unified / unified_norm
+            return unified
+        else:
+            return vector_hsv
 
     def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         """
@@ -64,15 +158,22 @@ class PersonTracker:
             return 0.0
         return float(np.dot(a, b) / (norm_a * norm_b))
 
-    def _match_reid(self, new_embedding: np.ndarray) -> Optional[int]:
+    def _match_reid(self, new_embedding: np.ndarray, exclude_ids: Set[int]) -> Optional[int]:
         """
         Queries the embedding cache to find if this visual signature matches
-        a previously seen person who left the screen.
+        a previously seen person who is currently NOT visible in the frame.
         """
         best_match_id = None
         best_score = -1.0
         
+        # Use config threshold
+        threshold = config.REID_COSINE_SIMILARITY_THRESHOLD
+        
         for pid, embeddings in self.embedding_cache.items():
+            # Skip matching if this person ID is currently visible in the room
+            if pid in exclude_ids:
+                continue
+                
             # Check against stored embeddings for this ID
             for cached_emb in embeddings:
                 sim = self._cosine_similarity(new_embedding, cached_emb)
@@ -80,8 +181,8 @@ class PersonTracker:
                     best_score = sim
                     best_match_id = pid
                     
-        # Verify if similarity is above the configuration threshold
-        if best_score >= REID_COSINE_SIMILARITY_THRESHOLD:
+        # Verify if similarity is above the resolved threshold
+        if best_score >= threshold:
             return best_match_id
         return None
 
@@ -91,8 +192,6 @@ class PersonTracker:
         Takes frame_data, runs detection + tracking, and updates the list of TrackedPerson.
         """
         if self.use_mock:
-            # Mock mode: The mock_data module will populate the people and totals.
-            # We just ensure the engine's tracking counts match what's in the data.
             if len(frame_data.persons) > 0:
                 frame_data.current_people_count = len(frame_data.persons)
                 max_id = max(p.person_id for p in frame_data.persons)
@@ -103,7 +202,7 @@ class PersonTracker:
         frame = frame_data.raw_frame
         
         # Run inference
-        results = self.model(frame, conf=PERSON_CONF_THRESHOLD, verbose=False)[0]
+        results = self.model(frame, conf=config.PERSON_CONF_THRESHOLD, verbose=False)[0]
         
         # Convert results to supervision format
         detections = sv.Detections.from_ultralytics(results)
@@ -116,6 +215,15 @@ class PersonTracker:
         
         active_persons = []
         
+        # 1. Identify which persistent IDs are ALREADY mapped in this frame.
+        # These are marked as active to prevent other tracks from matching them.
+        active_persistent_ids: Set[int] = set()
+        if detections.tracker_id is not None and len(detections.tracker_id) > 0:
+            for track_id in detections.tracker_id:
+                if track_id in self.track_id_to_persistent_id:
+                    active_persistent_ids.add(self.track_id_to_persistent_id[track_id])
+        
+        # 2. Match and resolve track IDs
         if detections.tracker_id is not None and len(detections.tracker_id) > 0:
             for i, track_id in enumerate(detections.tracker_id):
                 bbox = detections.xyxy[i].astype(int).tolist()  # [xmin, ymin, xmax, ymax]
@@ -123,7 +231,6 @@ class PersonTracker:
                 
                 # Get person crop
                 xmin, ymin, xmax, ymax = bbox
-                # Ensure coordinates are within frame bounds
                 h_max, w_max = frame.shape[:2]
                 xmin = max(0, min(xmin, w_max - 1))
                 ymin = max(0, min(ymin, h_max - 1))
@@ -137,24 +244,49 @@ class PersonTracker:
                 if track_id in self.track_id_to_persistent_id:
                     # Person is continuously tracked in session
                     pid = self.track_id_to_persistent_id[track_id]
-                    # Update their visual signature cache
-                    self.embedding_cache[pid].append(embedding)
-                    if len(self.embedding_cache[pid]) > 15:
-                        self.embedding_cache[pid].pop(0)
+                    
+                    # Diverse Caching: Only add new signature if it's visually distinct (> 0.92 similar means too identical)
+                    is_distinct = True
+                    for cached_emb in self.embedding_cache[pid]:
+                        if self._cosine_similarity(embedding, cached_emb) > 0.92:
+                            is_distinct = False
+                            break
+                            
+                    if is_distinct:
+                        self.embedding_cache[pid].append(embedding)
+                        # Keep up to 50 distinct profiles (covers ~360 degree rotation)
+                        if len(self.embedding_cache[pid]) > 50:
+                            self.embedding_cache[pid].pop(0)
+                            
                 else:
                     # New track ID detected. Try to match it to a past persistent_id (re-entry check)
-                    matched_pid = self._match_reid(embedding)
+                    # We pass active_persistent_ids to avoid collisions with active workers
+                    matched_pid = self._match_reid(embedding, active_persistent_ids)
                     if matched_pid is not None:
                         # Re-identified! Bind the tracker ID to this persistent ID
                         pid = matched_pid
                         self.track_id_to_persistent_id[track_id] = pid
-                        self.embedding_cache[pid].append(embedding)
+                        
+                        is_distinct = True
+                        for cached_emb in self.embedding_cache[pid]:
+                            if self._cosine_similarity(embedding, cached_emb) > 0.92:
+                                is_distinct = False
+                                break
+                        if is_distinct:
+                            self.embedding_cache[pid].append(embedding)
+                            if len(self.embedding_cache[pid]) > 50:
+                                self.embedding_cache[pid].pop(0)
+                                
+                        active_persistent_ids.add(pid)  # Mark as active
+                        print(f"[Tracker] Re-ID Success: Re-mapped track {track_id} to ID {pid}")
                     else:
                         # New unique person
                         pid = self.next_persistent_id
                         self.next_persistent_id += 1
                         self.track_id_to_persistent_id[track_id] = pid
                         self.embedding_cache[pid] = [embedding]
+                        active_persistent_ids.add(pid)  # Mark as active
+                        print(f"[Tracker] Registered New Unique Visitor: ID {pid}")
                 
                 person = TrackedPerson(
                     person_id=pid,
@@ -171,7 +303,6 @@ class PersonTracker:
         return frame_data
 
 if __name__ == "__main__":
-    # Test script for isolated testing
     print("Testing TrackerStage in Isolation...")
     import time
     

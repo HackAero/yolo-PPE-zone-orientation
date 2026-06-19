@@ -3,7 +3,7 @@ import numpy as np
 import random
 import time
 from typing import List, Dict, Any
-from src.types import FrameData, TrackedPerson
+from src.pipeline_types import FrameData, TrackedPerson
 
 class MockPersonSim:
     def __init__(self, person_id: int, x: float, y: float, has_helmet: bool = True, has_glasses: bool = True):

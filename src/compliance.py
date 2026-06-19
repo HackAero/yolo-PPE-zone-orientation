@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
 import os
-from src.types import FrameData
-from src.config import PPE_MODEL_PATH, PPE_CONF_THRESHOLD
+from src.pipeline_types import FrameData
+import src.config as config
 
 class PPEComplianceChecker:
     def __init__(self, use_mock: bool = False):
@@ -11,12 +11,12 @@ class PPEComplianceChecker:
         Supports loading a custom YOLO model and falls back to a color-based heuristic if model is missing.
         """
         self.use_mock = use_mock
-        if not use_mock and os.path.exists(PPE_MODEL_PATH) and PPE_MODEL_PATH != "yolov8n.pt":
+        if not use_mock and os.path.exists(config.PPE_MODEL_PATH) and config.PPE_MODEL_PATH != "yolov8n.pt":
             # If the user has placed a custom-trained model in models/
             from ultralytics import YOLO
-            print(f"[Compliance] Loading custom PPE Model: {PPE_MODEL_PATH}")
+            print(f"[Compliance] Loading custom PPE Model: {config.PPE_MODEL_PATH}")
             try:
-                self.model = YOLO(PPE_MODEL_PATH)
+                self.model = YOLO(config.PPE_MODEL_PATH)
             except Exception as e:
                 print(f"[Compliance] Error loading custom model: {e}. Falling back to heuristics.")
                 self.model = None
@@ -107,7 +107,7 @@ class PPEComplianceChecker:
                     
                     crop = frame_data.raw_frame[pymin:pymax, pxmin:pxmax]
                     if crop.size > 0:
-                        results = self.model(crop, conf=PPE_CONF_THRESHOLD, verbose=False)[0]
+                        results = self.model(crop, conf=config.PPE_CONF_THRESHOLD, verbose=False)[0]
                         
                         has_helmet = False
                         has_glasses = False

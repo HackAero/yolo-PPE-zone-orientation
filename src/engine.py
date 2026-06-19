@@ -1,8 +1,8 @@
 import cv2
 import time
 from typing import Generator, Optional
-
-from src.types import FrameData
+import src.config as config
+from src.pipeline_types import FrameData
 from src.tracker import PersonTracker
 from src.compliance import PPEComplianceChecker
 from src.environment import EnvironmentBehaviorMonitor
@@ -90,7 +90,15 @@ class SafetyPipelineEngine:
                     if not ret:
                         print("[PipelineEngine] Video stream ended or failed to read frame.")
                         break
-
+                        
+                    # Camera Pre-processing (Brightness & Contrast)
+                    frame = cv2.convertScaleAbs(
+                        frame, 
+                        alpha=config.CAMERA_CONTRAST, 
+                        beta=config.CAMERA_BRIGHTNESS
+                    )
+                        
+                    # Create default FrameData
                     frame_data = FrameData(
                         frame_index=frame_index,
                         timestamp=time.time(),

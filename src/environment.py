@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
 import os
-from src.types import FrameData, TrackedPerson
-from src.config import BLUR_LAPLACIAN_THRESHOLD, FALL_ANGLE_THRESHOLD
+from src.pipeline_types import FrameData, TrackedPerson
+import src.config as config
 
 class EnvironmentBehaviorMonitor:
     def __init__(self, use_mock: bool = False):
@@ -11,6 +11,9 @@ class EnvironmentBehaviorMonitor:
         Uses YOLO Pose model for advanced checks and falls back to bounding box aspect ratio checks.
         """
         self.use_mock = use_mock
+        # Fall confirmation buffer: tracks consecutive frames person appears fallen
+        self.fall_frame_count = {}  # maps person_id -> count of consecutive fall frames
+        
         if not use_mock:
             self.pose_model = None
             try:
@@ -44,7 +47,7 @@ class EnvironmentBehaviorMonitor:
             frame_data.blur_score = blur_val
             
             # If camera is covered, lens is smudged, or heavy smoke blocks edges
-            if blur_val < BLUR_LAPLACIAN_THRESHOLD:
+            if blur_val < config.BLUR_LAPLACIAN_THRESHOLD:
                 frame_data.is_image_blurry = True
                 alert = {
                     "type": "ENVIRONMENT_WARNING",
@@ -67,6 +70,12 @@ class EnvironmentBehaviorMonitor:
             frame_data.alerts.append(alert)
 
         # --- 3. Behavior / Fall Detection ---
+        # Track active person IDs this frame
+        active_person_ids = set(person.person_id for person in frame_data.persons)
+        
+        # Clean up tracking for people no longer in view (prevents memory leak)
+        self.fall_frame_count = {pid: count for pid, count in self.fall_frame_count.items() if pid in active_person_ids}
+        
         for person in frame_data.persons:
             if self.use_mock:
                 # In mock mode, keep the simulated state if pre-populated.
@@ -79,13 +88,8 @@ class EnvironmentBehaviorMonitor:
                 w = xmax - xmin
                 h = ymax - ymin
                 
-                # Method A: Aspect Ratio Fallback (If width/height is high, they are horizontal)
-                aspect_ratio = w / max(1, h)
-                if aspect_ratio > 1.25:
-                    is_fallen = True
-                
-                # Method B: YOLO Pose skeletal analysis
-                if self.pose_model is not None and not is_fallen:
+                # Method A: YOLO Pose skeletal analysis (PRIMARY METHOD - more reliable)
+                if self.pose_model is not None:
                     h_img, w_img = frame_data.raw_frame.shape[:2]
                     pxmin = max(0, xmin)
                     pymin = max(0, ymin)
@@ -96,31 +100,65 @@ class EnvironmentBehaviorMonitor:
                     if crop.size > 0:
                         pose_results = self.pose_model(crop, verbose=False)[0]
                         if pose_results.keypoints is not None and len(pose_results.keypoints.xy) > 0:
-                            # Extract coordinates of keypoints (17 points, shape [1, 17, 2])
+                            # Extract coordinates and confidence of keypoints (17 points, shape [1, 17, 2])
                             kpts = pose_results.keypoints.xy[0].cpu().numpy()
+                            kpt_conf = pose_results.keypoints.conf[0].cpu().numpy() if hasattr(pose_results.keypoints, 'conf') else None
                             person.keypoints = kpts
                             
                             # COCO Poses:
                             # Shoulder left/right: 5, 6
                             # Hip left/right: 11, 12
                             try:
-                                mid_shoulder = (kpts[5] + kpts[6]) / 2.0
-                                mid_hip = (kpts[11] + kpts[12]) / 2.0
-                                
-                                dx = mid_hip[0] - mid_shoulder[0]
-                                dy = mid_hip[1] - mid_shoulder[1]
-                                
-                                # Angle relative to vertical axis (y-axis)
-                                if dy != 0:
-                                    angle = np.degrees(np.arctan(abs(dx) / abs(dy)))
-                                    if angle > FALL_ANGLE_THRESHOLD:
-                                        is_fallen = True
+                                # Only use keypoints if they have sufficient confidence
+                                if kpt_conf is not None:
+                                    shoulder_conf = (kpt_conf[5] + kpt_conf[6]) / 2.0
+                                    hip_conf = (kpt_conf[11] + kpt_conf[12]) / 2.0
+                                    
+                                    # Check confidence threshold before angle calculation
+                                    if shoulder_conf >= config.KEYPOINT_CONFIDENCE_THRESHOLD and hip_conf >= config.KEYPOINT_CONFIDENCE_THRESHOLD:
+                                        mid_shoulder = (kpts[5] + kpts[6]) / 2.0
+                                        mid_hip = (kpts[11] + kpts[12]) / 2.0
+                                        
+                                        dx = mid_hip[0] - mid_shoulder[0]
+                                        dy = mid_hip[1] - mid_shoulder[1]
+                                        
+                                        # Angle relative to vertical axis (y-axis)
+                                        if dy != 0:
+                                            angle = np.degrees(np.arctan(abs(dx) / abs(dy)))
+                                            if angle > config.FALL_ANGLE_THRESHOLD:
+                                                is_fallen = True
+                                else:
+                                    # If confidence data unavailable, use keypoints anyway
+                                    mid_shoulder = (kpts[5] + kpts[6]) / 2.0
+                                    mid_hip = (kpts[11] + kpts[12]) / 2.0
+                                    
+                                    dx = mid_hip[0] - mid_shoulder[0]
+                                    dy = mid_hip[1] - mid_shoulder[1]
+                                    
+                                    if dy != 0:
+                                        angle = np.degrees(np.arctan(abs(dx) / abs(dy)))
+                                        if angle > config.FALL_ANGLE_THRESHOLD:
+                                            is_fallen = True
                             except Exception:
                                 pass
                 
-                person.is_fallen = is_fallen
+                # Method B: Aspect Ratio Fallback (only if pose model not available or failed)
+                if not is_fallen and self.pose_model is None:
+                    aspect_ratio = w / max(1, h)
+                    if aspect_ratio > config.FALL_ASPECT_RATIO_THRESHOLD:
+                        is_fallen = True
+                
+                # Track consecutive fall frames for temporal confirmation
+                person_id = person.person_id
+                if is_fallen:
+                    self.fall_frame_count[person_id] = self.fall_frame_count.get(person_id, 0) + 1
+                else:
+                    self.fall_frame_count[person_id] = 0
+                
+                # Only confirm fall if it persists for minimum consecutive frames
+                person.is_fallen = self.fall_frame_count[person_id] >= config.FALL_CONFIRMATION_FRAMES
 
-            # Raise critical fall alarms
+            # Raise critical fall alarms (only after confirmation buffer is satisfied)
             if person.is_fallen:
                 alert = {
                     "type": "FALL_ALERT",
