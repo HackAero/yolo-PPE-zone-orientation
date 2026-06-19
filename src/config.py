@@ -10,8 +10,12 @@ PERSON_CONF_THRESHOLD = 0.4
 PPE_CONF_THRESHOLD = 0.5
 
 # --- Privacy Settings (Person 3) ---
-PRIVACY_BLUR_KERNEL_SIZE = (51, 51)  # Higher values = stronger blur
-PRIVACY_FACE_PADDING = 10           # Bounding box padding in pixels for faces
+PRIVACY_BLUR_KERNEL_SIZE = (57, 57)  # Higher values = stronger blur
+PRIVACY_FACE_EXPAND_TOP = 0.35      # Include bangs and the top of the head
+PRIVACY_FACE_EXPAND_SIDE = 0.12     # Include hair beside both sides of the face
+PRIVACY_FACE_EXPAND_BOTTOM = 0.10   # Include the lower edge of the face
+PRIVACY_FACE_CACHE_FRAMES = 8       # Keep the last face location through short detection gaps
+PRIVACY_FACE_SMOOTHING_ALPHA = 0.7  # Weight of the latest face detection in EMA smoothing
 BLUR_TATOOS = False                 # Toggle if tattoo/skin segmentation is active
 
 # --- Quality & Safety Settings (Person 5) ---
