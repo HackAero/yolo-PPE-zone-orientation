@@ -74,59 +74,48 @@ class PersonTracker:
     def _extract_embedding(self, crop: np.ndarray) -> np.ndarray:
         """
         Extracts a feature descriptor vector from the crop.
-        
-        - Method A (CNN): Extracts a 576-dimensional semantic shape and texture vector using MobileNetV3.
-        - Method B (HSV): Falls back to a 3-zone spatial HSV color histogram.
+        Combines Semantic CNN features (shape/texture) with Spatial HSV features (color).
         """
+        dim_cnn = 576 if self.reid_model is not None else 0
+        dim_hsv = 192
+        
         if crop.size == 0:
-            dim = 576 if self.reid_model is not None else 192
-            return np.zeros(dim, dtype=np.float32)
+            return np.zeros(dim_cnn + dim_hsv, dtype=np.float32)
 
-        # --- Method A: Deep Learning CNN Embeddings (Very robust to angles and white shirts) ---
+        # --- Method A: Deep Learning CNN Embeddings (Shape/Texture) ---
+        vector_cnn = None
         if self.reid_model is not None:
             try:
-                # Convert BGR (cv2 default) to RGB
                 rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                
-                # Apply transforms and add batch dimension
                 tensor = self.transform(rgb_crop).unsqueeze(0).to(self.device)
-                
                 with torch.no_grad():
-                    # Forward pass through CNN features
                     features = self.reid_model(tensor)
-                    # Global average pool from [1, 576, 7, 7] -> [1, 576, 1, 1]
                     pooled = torch.nn.functional.adaptive_avg_pool2d(features, 1)
-                    vector = pooled.flatten().cpu().numpy()
-                    
-                # Normalize vector to unit length
-                norm = np.linalg.norm(vector)
+                    vector_cnn = pooled.flatten().cpu().numpy()
+                norm = np.linalg.norm(vector_cnn)
                 if norm > 0:
-                    vector = vector / norm
-                return vector
-            except Exception as e:
-                # If CNN forward pass fails, fall back to HSV histograms
-                pass
+                    vector_cnn = vector_cnn / norm
+            except Exception:
+                vector_cnn = np.zeros(dim_cnn, dtype=np.float32)
+        else:
+            vector_cnn = np.array([], dtype=np.float32)
 
-        # --- Method B: Spatial HSV Histogram Fallback ---
+        # --- Method B: Spatial HSV Histogram (Color) ---
         h, w = crop.shape[:2]
-        
-        # Discard horizontal edges to exclude background. Keep only the center 60% of crop.
         xmin_c = int(w * 0.2)
         xmax_c = int(w * 0.8)
         center_crop = crop[:, xmin_c:max(xmin_c + 1, xmax_c)]
         
-        # Convert center crop to HSV color space
         hsv = cv2.cvtColor(center_crop, cv2.COLOR_BGR2HSV)
         ch, cw = hsv.shape[:2]
         
-        # Divide vertically into 3 zones
         top_split = int(ch * 0.3)
         bottom_split = int(ch * 0.7)
         
         zones = [
-            hsv[0:top_split, :],             # Zone 1: Head/Shoulders
-            hsv[top_split:bottom_split, :],  # Zone 2: Torso
-            hsv[bottom_split:ch, :]          # Zone 3: Legs/Boots
+            hsv[0:top_split, :],
+            hsv[top_split:bottom_split, :],
+            hsv[bottom_split:ch, :]
         ]
         
         hist_parts = []
@@ -134,30 +123,30 @@ class PersonTracker:
             if zone.size == 0:
                 hist_parts.append(np.zeros(64, dtype=np.float32))
                 continue
-                
-            # Compute histograms (32 bins Hue, 16 Saturation, 16 Value)
             hist_h = cv2.calcHist([zone], [0], None, [32], [0, 180])
             hist_s = cv2.calcHist([zone], [1], None, [16], [0, 256])
             hist_v = cv2.calcHist([zone], [2], None, [16], [0, 256])
             
-            # Concatenate
             zone_hist = np.concatenate([hist_h, hist_s, hist_v]).flatten()
-            
-            # Normalize zone vector
             norm = np.linalg.norm(zone_hist)
             if norm > 0:
                 zone_hist = zone_hist / norm
             hist_parts.append(zone_hist)
             
-        # Concatenate all 3 zones to form the final spatial descriptor
-        full_hist = np.concatenate(hist_parts)
-        
-        # Final normalization
-        full_norm = np.linalg.norm(full_hist)
+        vector_hsv = np.concatenate(hist_parts)
+        full_norm = np.linalg.norm(vector_hsv)
         if full_norm > 0:
-            full_hist = full_hist / full_norm
+            vector_hsv = vector_hsv / full_norm
             
-        return full_hist
+        # --- Unify ---
+        if vector_cnn.size > 0:
+            unified = np.concatenate([vector_cnn, vector_hsv])
+            unified_norm = np.linalg.norm(unified)
+            if unified_norm > 0:
+                unified = unified / unified_norm
+            return unified
+        else:
+            return vector_hsv
 
     def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         """
