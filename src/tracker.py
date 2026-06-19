@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 import supervision as sv
 from ultralytics import YOLO
 from src.types import FrameData, TrackedPerson
-from src.config import YOLO_MODEL_PATH, PERSON_CONF_THRESHOLD, REID_COSINE_SIMILARITY_THRESHOLD
+import src.config as config
 
 class PersonTracker:
     def __init__(self, use_mock: bool = False):
@@ -13,8 +13,8 @@ class PersonTracker:
         """
         self.use_mock = use_mock
         if not use_mock:
-            print(f"[Tracker] Initializing YOLO model: {YOLO_MODEL_PATH}")
-            self.model = YOLO(YOLO_MODEL_PATH)
+            print(f"[Tracker] Initializing YOLO model: {config.YOLO_MODEL_PATH}")
+            self.model = YOLO(config.YOLO_MODEL_PATH)
             self.tracker = sv.ByteTrack()
             
             # Re-ID database: maps persistent_id -> list of visual embeddings
@@ -81,7 +81,7 @@ class PersonTracker:
                     best_match_id = pid
                     
         # Verify if similarity is above the configuration threshold
-        if best_score >= REID_COSINE_SIMILARITY_THRESHOLD:
+        if best_score >= config.REID_COSINE_SIMILARITY_THRESHOLD:
             return best_match_id
         return None
 
@@ -103,7 +103,7 @@ class PersonTracker:
         frame = frame_data.raw_frame
         
         # Run inference
-        results = self.model(frame, conf=PERSON_CONF_THRESHOLD, verbose=False)[0]
+        results = self.model(frame, conf=config.PERSON_CONF_THRESHOLD, verbose=False)[0]
         
         # Convert results to supervision format
         detections = sv.Detections.from_ultralytics(results)

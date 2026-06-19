@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from src.types import FrameData
-from src.config import PRIVACY_BLUR_KERNEL_SIZE, PRIVACY_FACE_PADDING
+import src.config as config
 
 class PrivacyAnonymizer:
     def __init__(self, use_mock: bool = False):
@@ -37,7 +37,7 @@ class PrivacyAnonymizer:
             
         roi = frame[ymin:ymax, xmin:xmax]
         # Gaussian blur requires odd numbers for kernel width/height
-        kw, kh = PRIVACY_BLUR_KERNEL_SIZE
+        kw, kh = config.PRIVACY_BLUR_KERNEL_SIZE
         kw = kw if kw % 2 == 1 else kw + 1
         kh = kh if kh % 2 == 1 else kh + 1
         
@@ -85,7 +85,7 @@ class PrivacyAnonymizer:
                         abs_fy = pymin + fy
                         
                         # Apply padding
-                        pad = PRIVACY_FACE_PADDING
+                        pad = config.PRIVACY_FACE_PADDING
                         self._blur_region(
                             frame,
                             abs_fx - pad,

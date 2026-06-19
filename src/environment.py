@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import os
 from src.types import FrameData, TrackedPerson
-from src.config import BLUR_LAPLACIAN_THRESHOLD, FALL_ANGLE_THRESHOLD
+import src.config as config
 
 class EnvironmentBehaviorMonitor:
     def __init__(self, use_mock: bool = False):
@@ -44,7 +44,7 @@ class EnvironmentBehaviorMonitor:
             frame_data.blur_score = blur_val
             
             # If camera is covered, lens is smudged, or heavy smoke blocks edges
-            if blur_val < BLUR_LAPLACIAN_THRESHOLD:
+            if blur_val < config.BLUR_LAPLACIAN_THRESHOLD:
                 frame_data.is_image_blurry = True
                 alert = {
                     "type": "ENVIRONMENT_WARNING",
@@ -113,7 +113,7 @@ class EnvironmentBehaviorMonitor:
                                 # Angle relative to vertical axis (y-axis)
                                 if dy != 0:
                                     angle = np.degrees(np.arctan(abs(dx) / abs(dy)))
-                                    if angle > FALL_ANGLE_THRESHOLD:
+                                    if angle > config.FALL_ANGLE_THRESHOLD:
                                         is_fallen = True
                             except Exception:
                                 pass
