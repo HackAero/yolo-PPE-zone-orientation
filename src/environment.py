@@ -197,6 +197,13 @@ class EnvironmentBehaviorMonitor:
 
         for person in frame_data.persons:
             xmin, ymin, xmax, ymax = person.bbox
+            
+            w = xmax - xmin
+            h = ymax - ymin
+            # Optimization: Skip pose estimation if bounding box is strictly vertical
+            if w / max(1, h) < 0.8:
+                continue
+
             pxmin = max(0, xmin)
             pymin = max(0, ymin)
             pxmax = min(w_img, xmax)
