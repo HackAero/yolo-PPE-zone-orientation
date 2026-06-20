@@ -1,10 +1,220 @@
 import cv2
 import argparse
 import time
+import sys
+import os
+import json
+from datetime import datetime
+from collections import deque
 from src.engine import SafetyPipelineEngine
 from src.session_labels import worker_label
 from src.zone_map import draw_zones_overlay
 import src.config as config
+
+
+class SupervisorReplayRecorder:
+    def __init__(self, output_dir="data/replays", pre_seconds=5.0, post_seconds=5.0, cooldown_seconds=15.0):
+        self.output_dir = output_dir
+        self.pre_seconds = pre_seconds
+        self.post_seconds = post_seconds
+        self.cooldown_seconds = cooldown_seconds
+
+        self._pre_buffer = deque(maxlen=1200)
+        self._active_event = None
+        self._last_trigger_ts = 0.0
+        self._popup_until_ts = 0.0
+        self._popup_lines = []
+        self._saved_until_ts = 0.0
+        self._saved_text = ""
+
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    def add_frame(self, timestamp, frame):
+        frame_copy = frame.copy()
+        self._pre_buffer.append((timestamp, frame_copy))
+
+        if self._active_event is None:
+            return
+
+        self._active_event["frames"].append(frame_copy)
+        if timestamp >= self._active_event["end_ts"]:
+            self._finalize_event(timestamp)
+
+    def trigger(self, timestamp, event):
+        if self._active_event is not None:
+            return False
+        if timestamp - self._last_trigger_ts < self.cooldown_seconds:
+            return False
+
+        pre_start = timestamp - self.pre_seconds
+        pre_frames = [frame for ts, frame in self._pre_buffer if ts >= pre_start]
+
+        self._active_event = {
+            "event": event,
+            "start_ts": timestamp,
+            "end_ts": timestamp + self.post_seconds,
+            "frames": pre_frames,
+        }
+        self._last_trigger_ts = timestamp
+
+        self._popup_until_ts = timestamp + 4.0
+        self._popup_lines = [
+            f"CRITICAL EVENT: {event['type']}",
+            event["summary"],
+            f"ACTION: {event['action']} | CONF: {event['confidence']}",
+        ]
+        return True
+
+    def _finalize_event(self, timestamp):
+        if self._active_event is None:
+            return
+
+        event = self._active_event["event"]
+        frames = self._active_event["frames"]
+        self._active_event = None
+
+        if not frames:
+            return
+
+        # Normalize replay frames so codecs receive consistent 8-bit BGR images.
+        norm_frames = []
+        base_h, base_w = frames[0].shape[:2]
+        base_w = int(base_w) - (int(base_w) % 2)
+        base_h = int(base_h) - (int(base_h) % 2)
+        for frame in frames:
+            if frame is None or frame.size == 0:
+                continue
+            out = frame
+            if len(out.shape) == 2:
+                out = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
+            elif out.shape[2] == 4:
+                out = cv2.cvtColor(out, cv2.COLOR_BGRA2BGR)
+            if out.dtype != "uint8":
+                out = out.clip(0, 255).astype("uint8")
+            if out.shape[1] != base_w or out.shape[0] != base_h:
+                out = cv2.resize(out, (base_w, base_h), interpolation=cv2.INTER_LINEAR)
+            else:
+                out = out[:base_h, :base_w]
+            norm_frames.append(out.copy())
+
+        if not norm_frames:
+            return
+
+        height, width = norm_frames[0].shape[:2]
+        duration = max(0.1, self.pre_seconds + self.post_seconds)
+        fps = max(8.0, min(24.0, len(norm_frames) / duration))
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        event_slug = event["type"].lower().replace("/", "_").replace(" ", "_")
+        base_name = f"event_{stamp}_{event_slug}"
+        avi_path = os.path.join(self.output_dir, f"{base_name}.avi")
+        mp4_path = os.path.join(self.output_dir, f"{base_name}.mp4")
+        meta_path = os.path.join(self.output_dir, f"{base_name}.json")
+
+        # Primary export: MJPG AVI is broadly decodable on macOS and avoids green-frame artifacts.
+        avi_writer = cv2.VideoWriter(
+            avi_path,
+            cv2.VideoWriter_fourcc(*"MJPG"),
+            fps,
+            (width, height),
+        )
+
+        if avi_writer.isOpened():
+            for frame in norm_frames:
+                avi_writer.write(frame)
+            avi_writer.release()
+            replay_path = avi_path
+        else:
+            replay_path = mp4_path
+
+        # Secondary export: keep mp4 as optional compatibility artifact.
+        mp4_writer = cv2.VideoWriter(
+            mp4_path,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            fps,
+            (width, height),
+        )
+        if mp4_writer.isOpened():
+            for frame in norm_frames:
+                mp4_writer.write(frame)
+            mp4_writer.release()
+
+        metadata = {
+            "timestamp": timestamp,
+            "event": event,
+            "video_path": replay_path,
+            "video_path_avi": avi_path,
+            "video_path_mp4": mp4_path,
+            "frame_count": len(norm_frames),
+            "fps": fps,
+            "pre_seconds": self.pre_seconds,
+            "post_seconds": self.post_seconds,
+        }
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+
+        self._saved_until_ts = timestamp + 3.0
+        self._saved_text = f"REPLAY SAVED: {os.path.basename(replay_path)}"
+
+    def draw_overlay(self, frame, timestamp):
+        if timestamp <= self._popup_until_ts and self._popup_lines:
+            line_height = 24
+            panel_h = 18 + line_height * len(self._popup_lines)
+            panel_w = max(420, int(frame.shape[1] * 0.55))
+            cv2.rectangle(frame, (12, 90), (12 + panel_w, 90 + panel_h), (0, 0, 255), -1)
+            for i, text in enumerate(self._popup_lines):
+                y = 90 + 24 + i * line_height
+                scale = 0.6 if i == 0 else 0.48
+                thick = 2 if i == 0 else 1
+                cv2.putText(frame, text, (24, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thick)
+
+        if timestamp <= self._saved_until_ts and self._saved_text:
+            cv2.rectangle(frame, (12, 64), (620, 86), (0, 120, 0), -1)
+            cv2.putText(frame, self._saved_text, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1)
+
+
+def build_critical_event(frame_data):
+    event_time = datetime.fromtimestamp(frame_data.timestamp).strftime("%H:%M:%S")
+
+    if frame_data.is_smoke_detected:
+        return {
+            "type": "FIRE/SMOKE",
+            "summary": f"Smoke/fire detected at {event_time} in camera view",
+            "where": "camera_view",
+            "who": "environment",
+            "confidence": "HIGH",
+            "action": "DISPATCH ROVER / EVACUATE",
+        }
+
+    for person in frame_data.persons:
+        if person.is_fallen:
+            zone = person.metadata.get("zone_label", "unknown")
+            return {
+                "type": "FALL",
+                "summary": f"Worker {person.person_id} fell in zone {zone} at {event_time}",
+                "where": zone,
+                "who": f"worker_{person.person_id}",
+                "confidence": "HIGH",
+                "action": "CHECK WORKER NOW",
+            }
+
+    for alert in frame_data.alerts:
+        if alert.get("debounced", False):
+            continue
+
+        if alert.get("severity") == "Critical" or alert.get("type") == "RESTRICTED_ENTRY":
+            person_id = alert.get("person_id", "unknown")
+            zone_id = alert.get("zone_id", "unknown")
+            return {
+                "type": str(alert.get("type", "CRITICAL")).replace("_", " "),
+                "summary": f"Worker {person_id} critical alert in zone {zone_id} at {event_time}",
+                "where": zone_id,
+                "who": f"worker_{person_id}",
+                "confidence": "HIGH",
+                "action": "DISPATCH ROVER",
+            }
+
+    return None
 
 def draw_corner_brackets(frame, xmin, ymin, xmax, ymax, color, thickness=2, length=15):
     # Top-left
@@ -235,6 +445,7 @@ def main():
         zones_path=args.zones_file,
     )
     stream = engine.stream_frames()
+    replay = SupervisorReplayRecorder()
 
     print("\n" + "=" * 50)
     print("MTU Pipeline Engine Active.")
@@ -247,6 +458,13 @@ def main():
     try:
         for frame_data in stream:
             render_annotations(frame_data)
+
+            event = build_critical_event(frame_data)
+            if event is not None:
+                replay.trigger(frame_data.timestamp, event)
+
+            replay.draw_overlay(frame_data.processed_frame, frame_data.timestamp)
+            replay.add_frame(frame_data.timestamp, frame_data.processed_frame)
 
             if frame_data.alerts:
                 for alert in frame_data.alerts:
