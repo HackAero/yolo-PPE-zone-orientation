@@ -172,8 +172,20 @@ class SafetyPipelineEngine:
         slowest = max(stage_ms, key=stage_ms.get) if stage_ms else "unknown"
         frame_data.extra_metadata["slowest_stage"] = slowest
 
+        # Dispatch environmental alerts (smoke / fire)
+        for alert in frame_data.alerts:
+            if alert.get("type") == "ENVIRONMENT_ALERT":
+                # Only send non‑debounced alerts (first occurrence)
+                if not alert.get("debounced", False):
+                    msg = alert["message"].upper()
+                    if "SMOKE" in msg:
+                        self.dispatcher.send(alert_type="SMOKE_DETECTED", person_id=-1)
+                    elif "FIRE" in msg:
+                        self.dispatcher.send(alert_type="FIRE_DETECTED", person_id=-1)
+        
         return frame_data
 
+    
     def cycle_zone_layout(self) -> str:
         """Cycle: 3 zones -> full safe -> full work -> full restricted."""
         return self.zone_monitor.cycle_layout()
