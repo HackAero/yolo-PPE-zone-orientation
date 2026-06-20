@@ -87,33 +87,15 @@ class SupervisorReplayRecorder:
         t.start()
 
     def _save_video_task(self, timestamp, event, frames):
-        # Normalize replay frames so codecs receive consistent 8-bit BGR images.
-        norm_frames = []
+        if not frames:
+            return
+
         base_h, base_w = frames[0].shape[:2]
         base_w = int(base_w) - (int(base_w) % 2)
         base_h = int(base_h) - (int(base_h) % 2)
-        for frame in frames:
-            if frame is None or frame.size == 0:
-                continue
-            out = frame
-            if len(out.shape) == 2:
-                out = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
-            elif out.shape[2] == 4:
-                out = cv2.cvtColor(out, cv2.COLOR_BGRA2BGR)
-            if out.dtype != "uint8":
-                out = out.clip(0, 255).astype("uint8")
-            if out.shape[1] != base_w or out.shape[0] != base_h:
-                out = cv2.resize(out, (base_w, base_h), interpolation=cv2.INTER_LINEAR)
-            else:
-                out = out[:base_h, :base_w]
-            norm_frames.append(out.copy())
 
-        if not norm_frames:
-            return
-
-        height, width = norm_frames[0].shape[:2]
         duration = max(0.1, self.pre_seconds + self.post_seconds)
-        fps = max(8.0, min(24.0, len(norm_frames) / duration))
+        fps = max(8.0, min(24.0, len(frames) / duration))
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         event_slug = event["type"].lower().replace("/", "_").replace(" ", "_")
@@ -121,28 +103,39 @@ class SupervisorReplayRecorder:
         avi_path = os.path.join(self.output_dir, f"{base_name}.avi")
         meta_path = os.path.join(self.output_dir, f"{base_name}.json")
 
-        # Primary export: MJPG AVI is broadly decodable on macOS and avoids green-frame artifacts.
         avi_writer = cv2.VideoWriter(
             avi_path,
             cv2.VideoWriter_fourcc(*"MJPG"),
             fps,
-            (width, height),
+            (base_w, base_h),
         )
 
+        valid_frames_count = 0
         if avi_writer.isOpened():
-            for frame in norm_frames:
-                avi_writer.write(frame)
+            for frame in frames:
+                if frame is None or frame.size == 0:
+                    continue
+                out = frame
+                if len(out.shape) == 2:
+                    out = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
+                elif out.shape[2] == 4:
+                    out = cv2.cvtColor(out, cv2.COLOR_BGRA2BGR)
+                if out.dtype != "uint8":
+                    out = out.clip(0, 255).astype("uint8")
+                if out.shape[1] != base_w or out.shape[0] != base_h:
+                    out = cv2.resize(out, (base_w, base_h), interpolation=cv2.INTER_LINEAR)
+                else:
+                    out = out[:base_h, :base_w]
+                avi_writer.write(out)
+                valid_frames_count += 1
             avi_writer.release()
-            replay_path = avi_path
-        else:
-            replay_path = avi_path
 
         metadata = {
             "timestamp": timestamp,
             "event": event,
-            "video_path": replay_path,
+            "video_path": avi_path,
             "video_path_avi": avi_path,
-            "frame_count": len(norm_frames),
+            "frame_count": valid_frames_count,
             "fps": fps,
             "pre_seconds": self.pre_seconds,
             "post_seconds": self.post_seconds,
@@ -151,7 +144,7 @@ class SupervisorReplayRecorder:
             json.dump(metadata, f, indent=2)
 
         self._saved_until_ts = timestamp + 3.0
-        self._saved_text = f"REPLAY SAVED: {os.path.basename(replay_path)}"
+        self._saved_text = f"REPLAY SAVED: {os.path.basename(avi_path)}"
 
     def draw_overlay(self, frame, timestamp):
         w = frame.shape[1]
@@ -331,24 +324,6 @@ def render_annotations(frame_data):
             1,
             cv2.LINE_AA,
         )
-        
-        # --- Minimalist PPE Status (H G V) ---
-        px = xmin
-        py = max(10, ymin - 4)
-        
-        # Helmet
-        c_h = (0, 200, 0) if person.has_helmet else (0, 0, 255) if person.has_helmet is False else (150, 150, 150)
-        cv2.putText(frame, "H", (px, py), cv2.FONT_HERSHEY_SIMPLEX, 0.25, c_h, 1, cv2.LINE_AA)
-        px += 10
-        
-        # Glasses
-        c_g = (0, 200, 0) if person.has_glasses else (0, 0, 255) if person.has_glasses is False else (150, 150, 150)
-        cv2.putText(frame, "G", (px, py), cv2.FONT_HERSHEY_SIMPLEX, 0.25, c_g, 1, cv2.LINE_AA)
-        px += 10
-        
-        # Vest
-        c_v = (0, 200, 0) if has_yellow_vest else (0, 0, 255) if has_yellow_vest is False else (150, 150, 150)
-        cv2.putText(frame, "V", (px, py), cv2.FONT_HERSHEY_SIMPLEX, 0.25, c_v, 1, cv2.LINE_AA)
 
     cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
 
@@ -488,14 +463,7 @@ def main():
                             f"[{alert['severity']}] {alert['message']}"
                         )
 
-            display_frame = cv2.resize(
-                frame_data.processed_frame,
-                None,
-                fx=2.0,
-                fy=2.0,
-                interpolation=cv2.INTER_LINEAR,
-            )
-            cv2.imshow(window_name, display_frame)
+            cv2.imshow(window_name, frame_data.processed_frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):

@@ -163,8 +163,6 @@ class SafetyPipelineEngine:
         stage_ms["environment"] = int((time.time() - t0) * 1000)
 
         self._ensure_processed_frame(frame_data)
-        if not self.use_mock and frame_data.processed_frame is frame_data.raw_frame:
-            frame_data.processed_frame = frame_data.raw_frame.copy()
 
         t0 = time.time()
         frame_data = self.privacy_stage.process(frame_data)

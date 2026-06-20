@@ -175,25 +175,28 @@ class PersonTracker:
         Queries the embedding cache to find if this visual signature matches
         a previously seen person who is currently NOT visible in the frame.
         
-        Uses top-3 mean scoring per candidate to reduce noise from outlier
-        embeddings — a single lucky match is no longer enough to claim a re-ID.
+        Uses maximum scoring per candidate.
         """
         best_match_id = None
         best_score = -1.0
         
         threshold = config.REID_COSINE_SIMILARITY_THRESHOLD
         
+        # Ensure new_embedding is normalized to rely on dot product
+        norm_new = np.linalg.norm(new_embedding)
+        if norm_new > 0:
+            new_emb_norm = new_embedding / norm_new
+        else:
+            return None
+
         for pid, embeddings in self.embedding_cache.items():
-            # Skip matching if this person ID is currently visible in the room
-            if pid in exclude_ids:
+            if pid in exclude_ids or not embeddings:
                 continue
             
-            # Compute cosine similarity against every stored embedding for this person
-            scores = [self._cosine_similarity(new_embedding, cached_emb) for cached_emb in embeddings]
-            
-            # Using the maximum score provides better scale invariance.
-            # If the new embedding matches at least one cached embedding strongly, it's a match.
-            candidate_score = max(scores) if scores else 0.0
+            emb_matrix = np.array(embeddings)
+            # Assuming cached embeddings are already normalized (done in _extract_embedding)
+            scores = np.dot(emb_matrix, new_emb_norm)
+            candidate_score = float(np.max(scores))
             
             if candidate_score > best_score:
                 best_score = candidate_score
@@ -217,30 +220,7 @@ class PersonTracker:
 
         # --- REAL DETECTION AND TRACKING PIPELINE ---
         frame = frame_data.raw_frame
-
         self._frame_counter += 1
-        run_detection = (self._frame_counter - 1) % config.PERSON_DETECT_INTERVAL == 0
-
-        if not run_detection and self._last_persons_snapshot:
-            frame_data.persons = [
-                TrackedPerson(
-                    person_id=person.person_id,
-                    bbox=list(person.bbox),
-                    confidence=person.confidence,
-                    has_helmet=person.has_helmet,
-                    has_glasses=person.has_glasses,
-                    compliance_violations=list(person.compliance_violations),
-                    is_fallen=person.is_fallen,
-                    keypoints=person.keypoints,
-                    embedding=person.embedding,
-                    reid_matched=person.reid_matched,
-                    metadata=dict(person.metadata),
-                )
-                for person in self._last_persons_snapshot
-            ]
-            frame_data.current_people_count = len(frame_data.persons)
-            frame_data.total_unique_people = len(self.confirmed_ids)
-            return frame_data
         
         # Run inference
         results = self.model(
@@ -261,6 +241,9 @@ class PersonTracker:
         detections = self.tracker.update_with_detections(detections)
         
         active_persons = []
+        
+        # Create a lookup for previous state to preserve temporal metadata
+        prev_state_map = {p.person_id: p for p in self._last_persons_snapshot}
         
         # 1. Identify which persistent IDs are ALREADY mapped in this frame.
         # These are marked as active to prevent other tracks from matching them.
@@ -310,12 +293,13 @@ class PersonTracker:
                     pid = self.track_id_to_persistent_id[track_id]
                     
                     # Diverse Caching: Only add new signature if it's visually distinct (> 0.92 similar means too identical)
-                    # The deque has maxlen=50 and evicts the oldest entry automatically — no manual pop needed
                     is_distinct = True
-                    for cached_emb in self.embedding_cache[pid]:
-                        if self._cosine_similarity(embedding, cached_emb) > 0.92:
+                    if len(self.embedding_cache[pid]) > 0:
+                        emb_matrix = np.array(self.embedding_cache[pid])
+                        norm_emb = embedding / (np.linalg.norm(embedding) or 1.0)
+                        scores = np.dot(emb_matrix, norm_emb)
+                        if np.max(scores) > 0.92:
                             is_distinct = False
-                            break
                             
                     if is_distinct:
                         self.embedding_cache[pid].append(embedding)
@@ -330,10 +314,12 @@ class PersonTracker:
                         self.track_id_to_persistent_id[track_id] = pid
                         
                         is_distinct = True
-                        for cached_emb in self.embedding_cache[pid]:
-                            if self._cosine_similarity(embedding, cached_emb) > 0.92:
+                        if len(self.embedding_cache[pid]) > 0:
+                            emb_matrix = np.array(self.embedding_cache[pid])
+                            norm_emb = embedding / (np.linalg.norm(embedding) or 1.0)
+                            scores = np.dot(emb_matrix, norm_emb)
+                            if np.max(scores) > 0.92:
                                 is_distinct = False
-                                break
                         if is_distinct:
                             self.embedding_cache[pid].append(embedding)  # deque auto-evicts at maxlen=50
                                 
@@ -350,11 +336,25 @@ class PersonTracker:
                         self._track_stable_frames[track_id] = 0
                         self._last_embeddings[pid] = embedding
                 
+                prev_p = prev_state_map.get(pid)
+                prev_metadata = dict(prev_p.metadata) if prev_p else {}
+                prev_reid = prev_p.reid_matched if prev_p else False
+                prev_has_helmet = prev_p.has_helmet if prev_p else None
+                prev_has_glasses = prev_p.has_glasses if prev_p else None
+                prev_is_fallen = prev_p.is_fallen if prev_p else None
+                prev_keypoints = prev_p.keypoints if prev_p else None
+
                 person = TrackedPerson(
                     person_id=pid,
                     bbox=bbox,
                     confidence=conf,
-                    embedding=embedding
+                    embedding=embedding,
+                    reid_matched=prev_reid,
+                    metadata=prev_metadata,
+                    has_helmet=prev_has_helmet,
+                    has_glasses=prev_has_glasses,
+                    is_fallen=prev_is_fallen,
+                    keypoints=prev_keypoints
                 )
                 active_persons.append(person)
         

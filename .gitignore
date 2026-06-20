@@ -18,3 +18,7 @@ data/replays/**
 recordings/
 .env
 .env.*
+
+# Machine Learning Model Weights
+*.pt
+weights/

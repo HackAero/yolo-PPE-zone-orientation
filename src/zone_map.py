@@ -153,50 +153,52 @@ class ZoneMonitor:
             return frame_data
 
         h, w = frame_data.raw_frame.shape[:2]
-        gray = cv2.cvtColor(frame_data.raw_frame, cv2.COLOR_BGR2GRAY)
-        
-        corners, ids, _ = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
         triggered_new_mode = False
-        
-        distance_msg = ""
-        
-        if ids is not None:
-            # We need a synthetic camera matrix to estimate 3D distance
-            focal_length = w
-            camera_matrix = np.array([
-                [focal_length, 0, w / 2],
-                [0, focal_length, h / 2],
-                [0, 0, 1]
-            ], dtype=np.float32)
-            dist_coeffs = np.zeros((4, 1), dtype=np.float32)
+        distance_msg = getattr(self, "_last_distance_msg", "")
+
+        if getattr(frame_data, "frame_index", 0) % 10 == 0:
+            gray = cv2.cvtColor(frame_data.raw_frame, cv2.COLOR_BGR2GRAY)
+            corners, ids, _ = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
+            distance_msg = ""
             
-            # Estimate pose (assuming marker is 15cm wide)
-            rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(corners, 0.15, camera_matrix, dist_coeffs)
-            
-            first_id = ids[0][0]
-            new_mode = self.current_mode
-            
-            if tvecs is not None:
-                # Get the Z distance to the marker in meters
-                dist_m = tvecs[0][0][2]
-                distance_msg = f" (Dist: {dist_m:.1f}m)"
+            if ids is not None:
+                # We need a synthetic camera matrix to estimate 3D distance
+                focal_length = w
+                camera_matrix = np.array([
+                    [focal_length, 0, w / 2],
+                    [0, focal_length, h / 2],
+                    [0, 0, 1]
+                ], dtype=np.float32)
+                dist_coeffs = np.zeros((4, 1), dtype=np.float32)
                 
-                # Threshold for "Close" vs "Far"
-                is_close = dist_m < 2.0
+                # Estimate pose (assuming marker is 15cm wide)
+                rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(corners, 0.15, camera_matrix, dist_coeffs)
                 
-                if first_id == 0:
-                    new_mode = "marker_0_close" if is_close else "marker_0_far"
-                elif first_id == 1:
-                    new_mode = "marker_1_close" if is_close else "marker_1_far"
-                elif first_id == 2:
-                    new_mode = "marker_2_close" if is_close else "marker_2_far"
-                elif first_id == 3:
-                    new_mode = "marker_3_close" if is_close else "marker_3_far"
-            
-            if new_mode != self.current_mode:
-                self.current_mode = new_mode
-                self._apply_layout()
-                triggered_new_mode = True
+                first_id = ids[0][0]
+                new_mode = self.current_mode
+                
+                if tvecs is not None:
+                    # Get the Z distance to the marker in meters
+                    dist_m = tvecs[0][0][2]
+                    distance_msg = f" (Dist: {dist_m:.1f}m)"
+                    
+                    # Threshold for "Close" vs "Far"
+                    is_close = dist_m < 2.0
+                    
+                    if first_id == 0:
+                        new_mode = "marker_0_close" if is_close else "marker_0_far"
+                    elif first_id == 1:
+                        new_mode = "marker_1_close" if is_close else "marker_1_far"
+                    elif first_id == 2:
+                        new_mode = "marker_2_close" if is_close else "marker_2_far"
+                    elif first_id == 3:
+                        new_mode = "marker_3_close" if is_close else "marker_3_far"
+                
+                if new_mode != self.current_mode:
+                    self.current_mode = new_mode
+                    self._apply_layout()
+                    triggered_new_mode = True
+            self._last_distance_msg = distance_msg
 
         frame_data.extra_metadata["zone_layout_label"] = f"MODE: {self.current_mode.upper()}{distance_msg}"
         if triggered_new_mode:
