@@ -7,6 +7,7 @@ import numpy as np
 
 from src.face_detection import SharedFaceDetector
 from src.pipeline_types import FrameData, TrackedPerson
+from src.tattoo import TattooDetector, build_tattoo_rois
 import src.config as config
 
 
@@ -18,6 +19,14 @@ class PrivacyAnonymizer:
         """
         self.use_mock = use_mock
         self.face_cache = {}
+
+        self.tattoo_detector = None
+        if config.BLUR_TATOOS and not use_mock:
+            try:
+                print(f"[Privacy] Loading local tattoo model: {config.TATTOO_MODEL_PATH}")
+                self.tattoo_detector = TattooDetector()
+            except Exception as error:
+                print(f"[Privacy] Tattoo model unavailable: {error}")
 
     def _blur_region(self, frame: np.ndarray, xmin: int, ymin: int, xmax: int, ymax: int):
         h, w = frame.shape[:2]
@@ -36,6 +45,35 @@ class PrivacyAnonymizer:
 
         blurred_roi = cv2.GaussianBlur(roi, (kw, kh), 0)
         frame[ymin:ymax, xmin:xmax] = blurred_roi
+
+    def _blur_masked_region(self, frame, bbox, mask):
+        """Blur only mask-selected pixels inside a full-frame bounding box."""
+        xmin, ymin, xmax, ymax = bbox
+        h, w = frame.shape[:2]
+        xmin = max(0, min(int(xmin), w))
+        ymin = max(0, min(int(ymin), h))
+        xmax = max(0, min(int(xmax), w))
+        ymax = max(0, min(int(ymax), h))
+
+        if xmax <= xmin or ymax <= ymin:
+            return
+
+        roi = frame[ymin:ymax, xmin:xmax]
+        if mask.shape != roi.shape[:2]:
+            mask = cv2.resize(
+                mask.astype(np.uint8),
+                (roi.shape[1], roi.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
+
+        if not np.any(mask):
+            return
+
+        kw, kh = config.PRIVACY_BLUR_KERNEL_SIZE
+        kw = kw if kw % 2 == 1 else kw + 1
+        kh = kh if kh % 2 == 1 else kh + 1
+        blurred_roi = cv2.GaussianBlur(roi, (kw, kh), 0)
+        roi[mask] = blurred_roi[mask]
 
     def _to_relative_bbox(self, face_bbox, person_bbox):
         fxmin, fymin, fxmax, fymax = face_bbox
@@ -106,6 +144,7 @@ class PrivacyAnonymizer:
 
     def process(self, frame_data: FrameData) -> FrameData:
         frame = frame_data.processed_frame
+        detection_frame = frame_data.raw_frame
         h_img, w_img = frame.shape[:2]
         active_person_ids = set()
 
@@ -148,11 +187,38 @@ class PrivacyAnonymizer:
                     fxmax + side_pad,
                     fymax + bottom_pad,
                 )
+            # --- Local Tattoo Segmentation & Privacy Redaction ---
+            if config.BLUR_TATOOS:
+                for limb_roi in build_tattoo_rois(person, detection_frame.shape):
+                    limb_xmin, limb_ymin, limb_xmax, limb_ymax = limb_roi["bbox"]
+                    limb_crop = detection_frame[
+                        limb_ymin:limb_ymax,
+                        limb_xmin:limb_xmax,
+                    ]
 
-            if person.metadata.get("has_exposed_tattoo", False):
-                arm_ymin = ymin + int(person_h * 0.3)
-                arm_ymax = ymin + int(person_h * 0.7)
-                self._blur_region(frame, xmin, arm_ymin, xmax, arm_ymax)
+                    try:
+                        if self.tattoo_detector is None:
+                            raise RuntimeError("Tattoo detector is not initialized")
+
+                        tattoo_mask = self.tattoo_detector.detect_mask(limb_crop)
+                        self._blur_masked_region(
+                            frame,
+                            limb_roi["bbox"],
+                            tattoo_mask,
+                        )
+                    except Exception as error:
+                        print(
+                            f"[Privacy] Tattoo inference failed for worker "
+                            f"{person.person_id}: {error}"
+                        )
+                        if config.TATTOO_FAIL_CLOSED:
+                            self._blur_region(
+                                frame,
+                                limb_xmin,
+                                limb_ymin,
+                                limb_xmax,
+                                limb_ymax,
+                            )
 
         for person_id in list(self.face_cache):
             if person_id in active_person_ids:

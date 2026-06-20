@@ -23,12 +23,12 @@ We are five people, no SLAM stack, one afternoon for hardware. So we aimed for s
 
 | Piece | What it does |
 |-------|----------------|
-| **OpenCV window** (`main.py`) | Live feed with zone bands, worker labels, PPE status, hazards |
+| **OpenCV window** (`main.py`) | Live feed with zone overlays, worker labels, PPE status, hazards |
 | **Streamlit** (`dashboard.py`) | Same pipeline in the browser + supervisor replay clips |
 | **Robot dashboard** (`robot_dashboard.html`) | MQTT alert board + fake rover ETA (no install, just open the file) |
 | **Robot sim** (`robot_sim.py`) | Pretends to drive to the incident when an alert fires |
 
-Press **`w`** in the video window to cycle zone layouts (3-band → all safe → all work → all restricted). Useful when judges ask “what if the whole room is a work zone?”
+The HUD shows **LIMITED** when vision quality is poor (blur/noise) — critical alerts still dispatch; non-critical robot pings are throttled.
 
 **Backup:** record a short screen capture of mock + dashboard + robot sim. Live demo is better; video saves you if Wi‑Fi or the webcam dies.
 
@@ -36,13 +36,13 @@ Press **`w`** in the video window to cycle zone layouts (3-band → all safe →
 
 ## Design decisions (why it looks like this)
 
-### Zones without a floor plan (“B-lite”)
+### Zone-aware compliance
 
-We wanted *different rules in different areas* but had no robot pose, no LiDAR, no calibration time on site.
+Safety rules depend on *where* someone is, not just what they are wearing.
 
-**Choice:** draw zones as vertical bands on the camera image (left = safe, center = work, right = restricted). A person’s bbox center picks the zone. Rules live in `zones/monitor.json` — easy to edit without recompiling.
+**Choice:** per-zone PPE rules and entry alerts live in `zones/*.json`; `zone_map.py` assigns each tracked person a `zone_id` from their position in the frame. MQTT dispatch carries that ID so the rover knows where to go.
 
-**Trade-off:** zones move with the camera, not with the building. Good enough for a side-mounted demo cam; a real install would add homography or SLAM later. The same JSON and `zone_id` fields are ready for that.
+**Trade-off:** zone geometry is config-driven — edit JSON without touching the pipeline. A production install would map zones to a real floor plan; the same `zone_id` contract stays.
 
 ### One pipeline, several models, one CPU
 
@@ -57,6 +57,10 @@ The engine runs up to four YOLO passes (people, PPE, pose, fire/smoke) plus Medi
 Custom `ppe_model.pt` for helmets and goggles. Yellow-vest check is HSV on the torso. Glasses fallback uses face landmarks + edge density.
 
 **Gotcha we hit:** a color-based “helmet” heuristic on bare hair kept saying helmet OK. We now **trust the YOLO model when it says no helmet** and only run the color check when the model did not run at all.
+
+### Graceful degradation when vision is noisy
+
+Blur, fog, or flickering detections can spam alerts. The engine tracks sustained quality issues and switches to **LIMITED reliability mode** (visible on the HUD). Critical incidents — falls, restricted entry, fire/smoke — still dispatch; warning-level robot pings are suppressed until vision stabilizes. Alerts must also persist for N frames (`alert_filter.py`) before they become confirmed incidents.
 
 ### Privacy by default on output
 
@@ -90,15 +94,19 @@ Camera / mock
 └──────┬──────┘
        ▼
 ┌─────────────┐   Zone rules + MQTT dispatch triggers
-│  Zone map   │   press w to cycle layout
+│  Zone map   │   zones JSON → zone_id per person
 └──────┬──────┘
        ▼
 ┌─────────────┐   Fall, smoke/fire, blur/fog
 │ Environment │
 └──────┬──────┘
        ▼
-┌─────────────┐   Face blur on output frame
+┌─────────────┐   Face blur (+ optional tattoo blur) on output
 │  Privacy    │
+└──────┬──────┘
+       ▼
+┌─────────────┐   Confirm alerts over N frames
+│ Alert verify│
 └──────┬──────┘
        ▼
   main.py / dashboard UI          MQTT ──► robot_dashboard.html
@@ -114,6 +122,7 @@ Camera / mock
 | Zones | `src/zone_map.py` |
 | Falls / environment | `src/environment.py` |
 | Blur | `src/privacy.py` |
+| Alert verification | `src/alert_filter.py` |
 | MQTT out | `src/dispatcher.py` |
 
 ---
@@ -133,8 +142,6 @@ pip install -r requirements.txt
 ```bash
 python main.py --source 0
 ```
-
-Zones are automatic: left 20% safe, center work (helmet + glasses + vest), right restricted (entry alert). Person position = bbox center.
 
 ### No camera (mock warehouse)
 
@@ -162,11 +169,11 @@ MQTT topics: `hackatum/robot/dispatch` (alerts), `hackatum/robot/status` (rover 
 streamlit run dashboard.py
 ```
 
-### Custom zones
+### Zone configuration
 
 ```bash
 python main.py --zones-file zones/monitor.json
-python main.py --camera-profile rover   # same bands, rover cam profile name
+python main.py --camera-profile rover
 ```
 
 ---
@@ -179,6 +186,8 @@ All in `src/config.py`:
 - `DISPATCH_BACKEND` — `mqtt` (default), `console`, or `http`
 - PPE and fire thresholds — tuned during the hackathon on real webcam footage
 - `ALERT_DEBOUNCE_SECONDS` — stops terminal/MQTT spam for the same violation
+- `ALERT_VERIFY_*` — frames required before an alert is confirmed
+- `RELIABILITY_*` — blur/noise thresholds for LIMITED mode
 
 ---
 
@@ -198,16 +207,16 @@ A production MTU rollout would still need access control, retention policy, and 
 - Not certified for real safety decisions — demo / research quality.
 - Vest detection is color-heuristic; works on high-vis yellow, not every uniform.
 - Public MQTT broker — do not put sensitive data in payloads.
-- Zone geometry is image-space; remount the camera and the bands move with it.
+- Zone geometry comes from `zones/*.json`; remount the camera and zones need re-tuning.
 
 ---
 
 ## If you only have two minutes (pitch outline)
 
 1. **Problem** — industrial floors have zones with different PPE rules; one camera should enforce that and call for help.
-2. **Trick** — conveyor pipeline + zone JSON + Re-ID counting + MQTT to a rover, all on CPU.
-3. **Live** — walk into restricted → dashboard screams → robot sim drives; remove helmet in work zone → PPE alert; press `w` to show layout modes.
-4. **Next** — homography to a floor plan, private MQTT, edge deploy on the rover itself.
+2. **Trick** — conveyor pipeline + live zone IDs + Re-ID counting + MQTT to a rover, all on CPU.
+3. **Live** — walk into restricted → dashboard screams → robot sim drives; remove helmet in work zone → PPE alert.
+4. **Next** — floor-plan zone mapping, private MQTT, edge deploy on the rover itself.
 
 ---
 

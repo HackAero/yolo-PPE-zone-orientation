@@ -205,7 +205,20 @@ class EnvironmentBehaviorMonitor:
                 if hasattr(pose_results.keypoints, "conf")
                 else None
             )
-            person.keypoints = kpts
+
+            # Pose inference runs on a crop of the tracked person. Keep the
+            # crop-local points for pose calculations, but publish full-frame
+            # coordinates for downstream stages such as tattoo redaction.
+            pxmin = max(0, person.bbox[0])
+            pymin = max(0, person.bbox[1])
+            global_kpts = kpts.copy()
+            global_kpts[:, 0] += pxmin
+            global_kpts[:, 1] += pymin
+
+            person.keypoints = global_kpts
+            person.metadata["keypoints_crop"] = kpts
+            person.metadata["keypoint_confidence"] = kpt_conf
+            person.metadata["keypoints_coordinate_space"] = "full_frame"
 
             try:
                 if kpt_conf is not None:
@@ -259,12 +272,23 @@ class EnvironmentBehaviorMonitor:
                     self._last_person_pose[person.person_id] = {
                         "is_fallen_raw": is_fallen,
                         "keypoints": person.keypoints,
+                        "keypoints_crop": person.metadata.get("keypoints_crop"),
+                        "keypoint_confidence": person.metadata.get("keypoint_confidence"),
+                        "keypoints_coordinate_space": "full_frame",
                     }
         else:
             for person in frame_data.persons:
                 cached = self._last_person_pose.get(person.person_id)
                 if cached is not None and cached.get("keypoints") is not None:
                     person.keypoints = cached["keypoints"]
+                    person.metadata["keypoints_crop"] = cached.get("keypoints_crop")
+                    person.metadata["keypoint_confidence"] = cached.get(
+                        "keypoint_confidence"
+                    )
+                    person.metadata["keypoints_coordinate_space"] = cached.get(
+                        "keypoints_coordinate_space",
+                        "full_frame",
+                    )
 
         for person in frame_data.persons:
             xmin, ymin, xmax, ymax = person.bbox

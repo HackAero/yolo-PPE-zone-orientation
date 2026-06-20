@@ -20,6 +20,7 @@ from src.mock_data import MockPipelineGenerator
 from src.pipeline_types import FrameData
 from src.ppe_inference import SharedPPEDetector
 from src.privacy import PrivacyAnonymizer
+from src.alert_filter import AlertVerificationFilter
 from src.tracker import PersonTracker
 from src.zone_map import ZoneMonitor
 
@@ -58,6 +59,8 @@ class SafetyPipelineEngine:
             camera_profile=camera_profile or config.ZONES_PROFILE,
         )
         self.dispatcher = RobotDispatcher()
+        self.alert_filter = AlertVerificationFilter()
+        self._degraded_blur_streak = 0
         self._frame_grabber: Optional[LatestFrameGrabber] = None
 
         if self.use_mock:
@@ -152,21 +155,12 @@ class SafetyPipelineEngine:
         stage_ms["compliance_heuristics"] = int((time.time() - t0) * 1000)
 
         t0 = time.time()
-        frame_data = self.zone_monitor.process(frame_data, dispatcher=self.dispatcher)
+        frame_data = self.zone_monitor.process(frame_data, dispatcher=None)
         stage_ms["zones"] = int((time.time() - t0) * 1000)
 
         t0 = time.time()
         frame_data = self.environment_stage.process(frame_data)
         stage_ms["environment"] = int((time.time() - t0) * 1000)
-
-        for person in frame_data.persons:
-            if person.is_fallen:
-                zone_id = person.metadata.get("zone_id", config.ZONE_ID)
-                self.dispatcher.send(
-                    alert_type="FALL_DETECTED",
-                    person_id=person.person_id,
-                    zone_id=zone_id if zone_id != "unknown" else None,
-                )
 
         self._ensure_processed_frame(frame_data)
         if not self.use_mock and frame_data.processed_frame is frame_data.raw_frame:
@@ -176,25 +170,76 @@ class SafetyPipelineEngine:
         frame_data = self.privacy_stage.process(frame_data)
         stage_ms["privacy"] = int((time.time() - t0) * 1000)
 
+        t0 = time.time()
+        frame_data = self.alert_filter.apply(frame_data)
+        stage_ms["alert_verify"] = int((time.time() - t0) * 1000)
+
+        self._update_reliability_mode(frame_data)
+
         slowest = max(stage_ms, key=stage_ms.get) if stage_ms else "unknown"
         frame_data.extra_metadata["slowest_stage"] = slowest
 
-        # Dispatch environmental alerts (smoke / fire)
-        for alert in frame_data.alerts:
-            if alert.get("type") == "ENVIRONMENT_ALERT":
-                # Only send non‑debounced alerts (first occurrence)
-                if not alert.get("debounced", False):
-                    msg = alert["message"].upper()
-                    if "SMOKE" in msg:
-                        self.dispatcher.send(
-                            alert_type="SMOKE_DETECTED", person_id=-1, zone_id="environment"
-                        )
-                    elif "FIRE" in msg:
-                        self.dispatcher.send(
-                            alert_type="FIRE_DETECTED", person_id=-1, zone_id="environment"
-                        )
+        self._dispatch_confirmed_alerts(frame_data)
         
         return frame_data
+
+    def _update_reliability_mode(self, frame_data: FrameData) -> None:
+        if frame_data.is_image_blurry:
+            self._degraded_blur_streak += 1
+        else:
+            self._degraded_blur_streak = max(0, self._degraded_blur_streak - 1)
+
+        verifying_count = int(frame_data.extra_metadata.get("verifying_count", 0) or 0)
+        limited_by_blur = self._degraded_blur_streak >= max(1, config.RELIABILITY_BLUR_FRAMES)
+        limited_by_noise = verifying_count >= max(1, config.RELIABILITY_VERIFYING_THRESHOLD)
+        is_limited = limited_by_blur or limited_by_noise
+
+        reasons = []
+        if limited_by_blur:
+            reasons.append("blur")
+        if limited_by_noise:
+            reasons.append("low_confidence")
+
+        frame_data.extra_metadata["reliability_mode"] = "LIMITED" if is_limited else "NORMAL"
+        frame_data.extra_metadata["reliability_reason"] = ",".join(reasons) if reasons else "stable"
+
+    def _dispatch_confirmed_alerts(self, frame_data: FrameData) -> None:
+        is_limited = frame_data.extra_metadata.get("reliability_mode") == "LIMITED"
+        suppress_warnings = bool(config.RELIABILITY_SUPPRESS_WARNING_DISPATCH)
+
+        for alert in frame_data.alerts:
+            alert_type = str(alert.get("type", ""))
+            person_id_raw = alert.get("person_id", -1)
+            try:
+                person_id = int(person_id_raw)
+            except (TypeError, ValueError):
+                person_id = -1
+            zone_id = alert.get("zone_id")
+
+            if alert_type == "FALL_ALERT":
+                self.dispatcher.send(alert_type="FALL_DETECTED", person_id=person_id, zone_id=zone_id)
+                continue
+
+            if alert_type == "RESTRICTED_ENTRY":
+                self.dispatcher.send(alert_type="RESTRICTED_ENTRY", person_id=person_id, zone_id=zone_id)
+                continue
+
+            if alert_type in {"PPE_VIOLATION", "ZONE_PPE_VIOLATION"}:
+                if is_limited and suppress_warnings:
+                    continue
+                msg = str(alert.get("message", "")).lower()
+                if "helmet" in msg:
+                    self.dispatcher.send(alert_type="NO_HELMET", person_id=person_id, zone_id=zone_id)
+                elif "glass" in msg:
+                    self.dispatcher.send(alert_type="NO_GLASSES", person_id=person_id, zone_id=zone_id)
+                continue
+
+            if alert_type == "ENVIRONMENT_ALERT":
+                msg = str(alert.get("message", "")).upper()
+                if "SMOKE" in msg:
+                    self.dispatcher.send(alert_type="SMOKE_DETECTED", person_id=-1)
+                elif "FIRE" in msg:
+                    self.dispatcher.send(alert_type="FIRE_DETECTED", person_id=-1)
 
     
     def cycle_zone_layout(self) -> str:

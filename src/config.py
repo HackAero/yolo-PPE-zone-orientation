@@ -17,10 +17,10 @@ if FAST_MODE:
     PPE_INFERENCE_INTERVAL = 2
     PPE_CROP_PASS = False
     PPE_CROP_MAX_PERSONS = 0
-    PERSON_DETECT_INTERVAL = 2
+    PERSON_DETECT_INTERVAL = 1
     FACE_DETECT_INTERVAL = 4
-    POSE_INFERENCE_INTERVAL = 4
-    SMOKE_INFERENCE_INTERVAL = 6
+    POSE_INFERENCE_INTERVAL = 1
+    SMOKE_INFERENCE_INTERVAL = 1
     COMPLIANCE_HEURISTIC_INTERVAL = 1
     ASYNC_FRAME_GRAB = True
 elif SMOOTH_MODE:
@@ -74,7 +74,16 @@ PRIVACY_FACE_EXPAND_SIDE = 0.12     # Include hair beside both sides of the face
 PRIVACY_FACE_EXPAND_BOTTOM = 0.10   # Include the lower edge of the face
 PRIVACY_FACE_CACHE_FRAMES = 8       # Keep the last face location through short detection gaps
 PRIVACY_FACE_SMOOTHING_ALPHA = 0.7  # Weight of the latest face detection in EMA smoothing
-BLUR_TATOOS = False                 # Toggle if tattoo/skin segmentation is active
+BLUR_TATOOS = True                  # Prototype: blur pose-derived arm regions
+TATTOO_MODEL_PATH = "models/tattoo_model.pt"
+TATTOO_CONF_THRESHOLD = 0.25        # Favor clear tattoos and reduce false positives
+TATTOO_MASK_THRESHOLD = 0.5         # Segmentation mask binarization threshold
+TATTOO_INPUT_SIZE = 640             # YOLO tattoo inference resolution
+TATTOO_FAIL_CLOSED = False          # Keep arms clear if tattoo inference fails
+ARM_ROI_PADDING_RATIO = 0.15        # Tighter padding for cleaner arm crops
+ARM_ROI_MIN_PADDING = 12            # Minimum arm ROI padding in pixels
+LEG_ROI_PADDING_RATIO = 0.15        # Padding relative to each leg segment length
+LEG_ROI_MIN_PADDING = 12            # Minimum leg ROI padding in pixels
 
 # --- Quality & Safety Settings (Person 5) ---
 BLUR_LAPLACIAN_THRESHOLD = 20.0     # Under this value, image is flagged as blurry/smudged
@@ -84,7 +93,7 @@ SMOKE_CONFIRMATION_FRAMES = 1       # Threshold for consecutive smoke alerts to 
 FIRE_CONFIRMATION_FRAMES = 1        # Threshold for consecutive fire alerts to be sure  
 
 FALL_ANGLE_THRESHOLD = 50           # Angle (degrees) of spine relative to vertical (e.g. > 60 = horizontal/lying)
-FALL_CONFIRMATION_FRAMES = 2        # Number of consecutive frames required to confirm a fall
+FALL_CONFIRMATION_FRAMES = 1        # Number of consecutive frames required to confirm a fall
 KEYPOINT_CONFIDENCE_THRESHOLD = 0.35 # Minimum confidence for pose keypoints to be used
 FALL_ASPECT_RATIO_THRESHOLD = 1.75   # Width/height ratio threshold for aspect ratio fallback detection
 
@@ -123,6 +132,20 @@ def resolve_zones_path(profile: Optional[str] = None, explicit_path: Optional[st
 # same person + violation type. Eliminates the per-frame spam you see in the
 # terminal. Set to 0 to disable debouncing (show every alert).
 ALERT_DEBOUNCE_SECONDS = 5
+
+# --- False Alarm Filter ---
+# Alerts must persist for N frames before they become confirmed incidents.
+ALERT_VERIFY_CRITICAL_FRAMES = 1
+ALERT_VERIFY_WARNING_FRAMES = 2
+# Reset verifier state if an alert signature disappears longer than this.
+ALERT_VERIFY_STALE_SECONDS = 1.5
+
+# --- Reliability Degradation ---
+# If vision quality/noise is poor for sustained frames, switch to LIMITED mode.
+RELIABILITY_BLUR_FRAMES = 3
+RELIABILITY_VERIFYING_THRESHOLD = 4
+# In LIMITED mode, suppress warning-level robot dispatch to reduce noisy actions.
+RELIABILITY_SUPPRESS_WARNING_DISPATCH = True
 
 # --- Tracker Maintenance ---
 # How often (in detection frames) to prune stale ByteTrack IDs from internal
