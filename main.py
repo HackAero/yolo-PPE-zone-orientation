@@ -3,6 +3,7 @@ import argparse
 import time
 import sys
 from src.engine import SafetyPipelineEngine
+import src.config as config
 
 def render_annotations(frame_data):
     """
@@ -79,13 +80,19 @@ def render_annotations(frame_data):
             1
         )
         
-    # 2. Draw Top HUD Bar
-    hud_bg = frame.copy()
-    cv2.rectangle(hud_bg, (0, 0), (w, 55), (0, 0, 0), -1)
-    cv2.addWeighted(hud_bg, 0.65, frame, 0.35, 0, frame)
+    # 2. Draw Top HUD Bar (ROI-only overlay, no full-frame copy)
+    hud_h = 55
+    roi = frame[0:hud_h, 0:w]
+    overlay = roi.copy()
+    cv2.rectangle(overlay, (0, 0), (w, hud_h), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.65, roi, 0.35, 0, roi)
     
     fps = frame_data.extra_metadata.get("fps", 0)
     latency = frame_data.extra_metadata.get("latency_ms", 0)
+    stage_ms = frame_data.extra_metadata.get("stage_ms", {})
+    slowest = frame_data.extra_metadata.get("slowest_stage", "")
+    slowest_ms = stage_ms.get(slowest, 0) if slowest else 0
+    mode_label = "FAST" if config.FAST_MODE else "SMOOTH" if config.SMOOTH_MODE else "STD"
     
     # Title
     cv2.putText(frame, "MTU WORKER MONITORING SYSTEM", (15, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
@@ -94,8 +101,11 @@ def render_annotations(frame_data):
     cv2.putText(frame, stats_str, (15, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1)
     
     # System stats
-    perf_str = f"FPS: {fps} | Latency: {latency}ms"
-    cv2.putText(frame, perf_str, (w - 180, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (100, 255, 100), 1)
+    perf_str = f"FPS: {fps} | {latency}ms | {mode_label}"
+    cv2.putText(frame, perf_str, (w - 280, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (100, 255, 100), 1)
+    if slowest:
+        stage_str = f"Slowest: {slowest} ({slowest_ms}ms)"
+        cv2.putText(frame, stage_str, (w - 280, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 220, 180), 1)
     
     # 3. Draw Environmental Quality Overlays
     if frame_data.is_image_blurry:

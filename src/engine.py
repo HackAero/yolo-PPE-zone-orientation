@@ -1,15 +1,19 @@
 import cv2
 import time
 from typing import Generator, Optional
+
 import src.config as config
-from src.pipeline_types import FrameData
-from src.tracker import PersonTracker
+from src.capture import LatestFrameGrabber
 from src.compliance import PPEComplianceChecker
 from src.environment import EnvironmentBehaviorMonitor
-from src.privacy import PrivacyAnonymizer
-from src.mock_data import MockPipelineGenerator
-from src.ppe import HelmetDetector, helmet_inside_person, GlassesDetector, glasses_inside_person
+from src.face_detection import SharedFaceDetector
+from src.frame_utils import preprocess_camera_frame
 from src.dispatcher import RobotDispatcher
+from src.mock_data import MockPipelineGenerator
+from src.pipeline_types import FrameData
+from src.ppe_inference import SharedPPEDetector
+from src.privacy import PrivacyAnonymizer
+from src.tracker import PersonTracker
 
 
 class SafetyPipelineEngine:
@@ -18,21 +22,17 @@ class SafetyPipelineEngine:
         self.video_source = video_source
         self.running = False
 
-        print(f"[PipelineEngine] Initializing pipeline. Mock mode: {use_mock}")
+        mode = "FAST" if config.FAST_MODE else "SMOOTH" if config.SMOOTH_MODE else "STANDARD"
+        print(f"[PipelineEngine] Initializing pipeline. Mock mode: {use_mock}, mode: {mode}")
 
+        self.face_detector = SharedFaceDetector(use_mock=use_mock)
         self.tracker_stage = PersonTracker(use_mock=use_mock)
+        self.ppe_detector = SharedPPEDetector(use_mock=use_mock)
         self.compliance_stage = PPEComplianceChecker(use_mock=use_mock)
         self.environment_stage = EnvironmentBehaviorMonitor(use_mock=use_mock)
         self.privacy_stage = PrivacyAnonymizer(use_mock=use_mock)
         self.dispatcher = RobotDispatcher()
-
-        # Helmet detector.
-        # Uses trained PPE model for accurate detection
-        self.helmet_detector = HelmetDetector(config.PPE_MODEL_PATH)
-
-        # Glasses detector.
-        # Uses trained PPE model for accurate detection
-        self.glasses_detector = GlassesDetector(config.PPE_MODEL_PATH)
+        self._frame_grabber: Optional[LatestFrameGrabber] = None
 
         if self.use_mock:
             self.mock_generator = MockPipelineGenerator()
@@ -42,58 +42,87 @@ class SafetyPipelineEngine:
             src = 0 if video_source is None else video_source
             print(f"[PipelineEngine] Opening video source: {src}")
             self.cap = cv2.VideoCapture(src)
+            if self.cap.isOpened() and config.CAMERA_MAX_WIDTH > 0:
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_MAX_WIDTH)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(config.CAMERA_MAX_WIDTH * 0.75))
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             if not self.cap.isOpened():
-                print(f"[PipelineEngine] Error: Could not open video source {src}. Falling back to MOCK mode.")
+                print(
+                    f"[PipelineEngine] Error: Could not open video source {src}. "
+                    "Falling back to MOCK mode."
+                )
                 self.use_mock = True
                 self.mock_generator = MockPipelineGenerator()
                 self.cap = None
+            elif config.ASYNC_FRAME_GRAB:
+                self._frame_grabber = LatestFrameGrabber(self.cap)
+
+        if not self.use_mock:
+            self._warmup_models()
+
+    def _warmup_models(self) -> None:
+        """Prime YOLO/MediaPipe with a tiny dummy frame to avoid first-frame spikes."""
+        import numpy as np
+
+        dummy = np.zeros((config.YOLO_IMGSZ, config.YOLO_IMGSZ, 3), dtype=np.uint8)
+        try:
+            self.tracker_stage.model(dummy, imgsz=config.YOLO_IMGSZ, device=config.YOLO_DEVICE, verbose=False)
+        except Exception:
+            pass
+        try:
+            if self.ppe_detector.model is not None:
+                self.ppe_detector.model(
+                    dummy,
+                    imgsz=config.YOLO_IMGSZ,
+                    device=config.YOLO_DEVICE,
+                    verbose=False,
+                )
+        except Exception:
+            pass
+
+    def _ensure_processed_frame(self, frame_data: FrameData) -> None:
+        if frame_data.processed_frame is None or frame_data.processed_frame.size == 0:
+            frame_data.processed_frame = frame_data.raw_frame
 
     def process_frame(self, frame_data: FrameData) -> FrameData:
-        # Step 1: Detect and track people
+        stage_ms = {}
+        frame_data.extra_metadata["stage_ms"] = stage_ms
+
+        t0 = time.time()
         frame_data = self.tracker_stage.process(frame_data)
+        stage_ms["tracker"] = int((time.time() - t0) * 1000)
 
-        # Step 2: Existing PPE compliance logic (detects helmets & glasses)
+        if not self.use_mock:
+            t0 = time.time()
+            ppe_result = self.ppe_detector.detect_all(
+                frame_data.raw_frame,
+                persons=frame_data.persons,
+            )
+            stage_ms["ppe_yolo"] = int((time.time() - t0) * 1000)
+            stage_ms["ppe_assign"] = 0
+
+            if not ppe_result.model_available:
+                for person in frame_data.persons:
+                    person.has_helmet = None
+                    person.has_glasses = None
+
+            t0 = time.time()
+            self.face_detector.populate_frame_cache(frame_data)
+            stage_ms["face_detect"] = int((time.time() - t0) * 1000)
+        else:
+            stage_ms["ppe_yolo"] = 0
+            stage_ms["ppe_assign"] = 0
+            stage_ms["face_detect"] = 0
+
+        t0 = time.time()
         frame_data = self.compliance_stage.process(frame_data)
+        stage_ms["compliance_heuristics"] = int((time.time() - t0) * 1000)
 
-        # Step 3: Helmet check (from ppe_model via direct detector for extra validation)
-        helmet_boxes = self.helmet_detector.detect_helmets(frame_data.raw_frame)
-
-        for person in frame_data.persons:
-            has_helmet = False
-
-            for helmet_box in helmet_boxes:
-                if helmet_inside_person(person.bbox, helmet_box):
-                    has_helmet = True
-                    break
-
-            # Merge helmet votes: preserve True if already detected, otherwise accept positive detections
-            if person.has_helmet is True or has_helmet:
-                person.has_helmet = True
-            elif person.has_helmet is None:
-                person.has_helmet = False
-
-        # Step 3.5: Glasses check (from ppe_model via direct detector for extra validation)
-        glasses_boxes = self.glasses_detector.detect_glasses(frame_data.raw_frame)
-
-        for person in frame_data.persons:
-            has_glasses = False
-
-            for glasses_box in glasses_boxes:
-                if glasses_inside_person(person.bbox, glasses_box):
-                    has_glasses = True
-                    break
-
-            # Merge glasses votes: preserve True if already detected, otherwise accept positive detections
-            if person.has_glasses is True or has_glasses:
-                person.has_glasses = True
-            elif person.has_glasses is None:
-                person.has_glasses = False
-
-        # Step 4: Environment / fall detection
+        t0 = time.time()
         frame_data = self.environment_stage.process(frame_data)
+        stage_ms["environment"] = int((time.time() - t0) * 1000)
 
-        # Step 4.5: Dispatch robot signal for any confirmed fall or PPE violation
         for person in frame_data.persons:
             if person.is_fallen:
                 self.dispatcher.send(alert_type="FALL_DETECTED", person_id=person.person_id)
@@ -102,10 +131,27 @@ class SafetyPipelineEngine:
             if "Glasses" in person.compliance_violations:
                 self.dispatcher.send(alert_type="NO_GLASSES", person_id=person.person_id)
 
-        # Step 5: Privacy redaction last
+        self._ensure_processed_frame(frame_data)
+        if not self.use_mock and frame_data.processed_frame is frame_data.raw_frame:
+            frame_data.processed_frame = frame_data.raw_frame.copy()
+
+        t0 = time.time()
         frame_data = self.privacy_stage.process(frame_data)
+        stage_ms["privacy"] = int((time.time() - t0) * 1000)
+
+        slowest = max(stage_ms, key=stage_ms.get) if stage_ms else "unknown"
+        frame_data.extra_metadata["slowest_stage"] = slowest
 
         return frame_data
+
+    def _read_camera_frame(self):
+        if self._frame_grabber is not None:
+            return self._frame_grabber.read()
+
+        ret, frame = self.cap.read()
+        if not ret:
+            return False, None
+        return True, preprocess_camera_frame(frame)
 
     def stream_frames(self) -> Generator[FrameData, None, None]:
         self.running = True
@@ -118,25 +164,24 @@ class SafetyPipelineEngine:
                 if self.use_mock:
                     frame_data = self.mock_generator.next_frame()
                 else:
-                    ret, frame = self.cap.read()
+                    ret, frame = self._read_camera_frame()
+                    if not ret or frame is None:
+                        # Async grabber may need a moment to deliver the first frame.
+                        for _ in range(40):
+                            time.sleep(0.05)
+                            ret, frame = self._read_camera_frame()
+                            if ret and frame is not None:
+                                break
 
-                    if not ret:
+                    if not ret or frame is None:
                         print("[PipelineEngine] Video stream ended or failed to read frame.")
                         break
-                        
-                    # Camera Pre-processing (Brightness & Contrast)
-                    frame = cv2.convertScaleAbs(
-                        frame, 
-                        alpha=config.CAMERA_CONTRAST, 
-                        beta=config.CAMERA_BRIGHTNESS
-                    )
-                        
-                    # Create default FrameData
+
                     frame_data = FrameData(
                         frame_index=frame_index,
                         timestamp=time.time(),
                         raw_frame=frame,
-                        processed_frame=frame.copy()
+                        processed_frame=frame,
                     )
 
                 frame_data = self.process_frame(frame_data)
@@ -155,6 +200,10 @@ class SafetyPipelineEngine:
         self.running = False
         self.dispatcher.shutdown()
 
+        if self._frame_grabber is not None:
+            self._frame_grabber.stop()
+            self._frame_grabber = None
+
         if self.cap is not None:
             self.cap.release()
             self.cap = None
@@ -172,7 +221,8 @@ if __name__ == "__main__":
             f"Frame {frame_data.frame_index} processed. "
             f"People: {frame_data.current_people_count}, "
             f"Alerts triggered: {len(frame_data.alerts)}, "
-            f"FPS: {frame_data.extra_metadata['fps']}"
+            f"FPS: {frame_data.extra_metadata['fps']}, "
+            f"Stages: {frame_data.extra_metadata.get('stage_ms', {})}"
         )
 
     engine.release()
