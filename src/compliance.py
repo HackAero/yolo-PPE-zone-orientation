@@ -21,6 +21,58 @@ class PPEComplianceChecker:
         # every frame. Keyed by (person_id, violation_name).
         self._alert_last_sent: Dict[Tuple[int, str], float] = {}
 
+    def _detect_yellow_vest_info(self, frame: np.ndarray, bbox: list) -> bool:
+        """
+        Informational yellow-vest detector.
+        Looks for strong yellow coverage in the torso area only.
+        """
+        xmin, ymin, xmax, ymax = bbox
+        person_w = xmax - xmin
+        person_h = ymax - ymin
+        if person_w < 20 or person_h < 40:
+            return False
+
+        torso_ymin = ymin + int(person_h * 0.25)
+        torso_ymax = ymin + int(person_h * 0.78)
+        torso_xmin = xmin + int(person_w * 0.15)
+        torso_xmax = xmax - int(person_w * 0.15)
+
+        h_img, w_img = frame.shape[:2]
+        torso_ymin = max(0, min(torso_ymin, h_img - 1))
+        torso_ymax = max(0, min(torso_ymax, h_img - 1))
+        torso_xmin = max(0, min(torso_xmin, w_img - 1))
+        torso_xmax = max(0, min(torso_xmax, w_img - 1))
+
+        torso_crop = frame[torso_ymin:torso_ymax, torso_xmin:torso_xmax]
+        if torso_crop.size == 0:
+            return False
+
+        hsv = cv2.cvtColor(torso_crop, cv2.COLOR_BGR2HSV)
+        yellow_mask = cv2.inRange(hsv, np.array([15, 70, 80]), np.array([40, 255, 255]))
+        hi_vis_lime_mask = cv2.inRange(hsv, np.array([38, 65, 80]), np.array([55, 255, 255]))
+        mask = cv2.bitwise_or(yellow_mask, hi_vis_lime_mask)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+        color_pixels = cv2.countNonZero(mask)
+        total_pixels = torso_crop.shape[0] * torso_crop.shape[1]
+        if total_pixels == 0:
+            return False
+
+        ratio = color_pixels / total_pixels
+        if ratio < 0.16:
+            return False
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return False
+
+        largest = max(contours, key=cv2.contourArea)
+        contour_area = cv2.contourArea(largest)
+        return contour_area >= 0.07 * total_pixels
+
     def _detect_helmet_heuristic(self, frame: np.ndarray, bbox: list) -> bool:
         """
         HSV color range heuristic for safety helmets.
@@ -211,6 +263,17 @@ class PPEComplianceChecker:
         )
 
         for person in frame_data.persons:
+            if self.use_mock:
+                person.metadata["has_yellow_vest"] = bool(
+                    person.metadata.get("has_yellow_vest", True)
+                )
+            else:
+                if run_heuristics or "cached_yellow_vest" not in person.metadata:
+                    person.metadata["cached_yellow_vest"] = self._detect_yellow_vest_info(
+                        frame_data.raw_frame, person.bbox
+                    )
+                person.metadata["has_yellow_vest"] = bool(person.metadata["cached_yellow_vest"])
+
             if self.use_mock:
                 if person.has_helmet is None:
                     person.has_helmet = True

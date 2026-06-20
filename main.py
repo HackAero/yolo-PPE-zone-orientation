@@ -75,21 +75,28 @@ def render_annotations(frame_data):
     # 1. Draw Bounding Boxes and Labels for Tracked Persons
     for person in frame_data.persons:
         xmin, ymin, xmax, ymax = person.bbox
+        has_yellow_vest = person.metadata.get("has_yellow_vest")
+        if has_yellow_vest is True:
+            vest_text = "VEST: YES"
+        elif has_yellow_vest is False:
+            vest_text = "VEST: NO"
+        else:
+            vest_text = "VEST: ?"
         
         is_safe = True
-        status_text = f"ID {person.person_id} | SAFE"
+        status_text = f"ID {person.person_id} | SAFE | {vest_text}"
         color = (0, 200, 0)  # Green for safe
         
         if person.is_fallen:
             color = (0, 0, 255)  # Red
-            status_text = f"ID {person.person_id} | FALL DETECTED"
+            status_text = f"ID {person.person_id} | FALL DETECTED | {vest_text}"
             is_safe = False
         elif len(person.compliance_violations) > 0:
             color = (0, 140, 255)  # Orange
             viols = []
             if "Helmet" in person.compliance_violations: viols.append("NO HELMET")
             if "Glasses" in person.compliance_violations: viols.append("NO GLASSES")
-            status_text = f"ID {person.person_id} | UNSAFE: {', '.join(viols)}"
+            status_text = f"ID {person.person_id} | UNSAFE: {', '.join(viols)} | {vest_text}"
             is_safe = False
 
         if is_safe:
