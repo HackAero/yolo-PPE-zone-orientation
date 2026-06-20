@@ -67,8 +67,8 @@ BLUR_TATOOS = False                 # Toggle if tattoo/skin segmentation is acti
 
 # --- Quality & Safety Settings (Person 5) ---
 BLUR_LAPLACIAN_THRESHOLD = 20.0     # Under this value, image is flagged as blurry/smudged
-SMOKE_CONF_THRESHOLD = 0.68          # Threshold for environmental smoke detection
-FIRE_CONF_THRESHOLD = 0.6           # Threshold for environmental fire detection
+SMOKE_CONF_THRESHOLD = 0.62          # Threshold for environmental smoke detection
+FIRE_CONF_THRESHOLD = 0.52           # Threshold for environmental fire detection
 SMOKE_CONFIRMATION_FRAMES = 4       # Threshold for consecutive smoke alerts to be sure  
 FIRE_CONFIRMATION_FRAMES = 3        # Threshold for consecutive fire alerts to be sure  
 
