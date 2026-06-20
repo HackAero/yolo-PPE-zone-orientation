@@ -115,8 +115,13 @@ def render_annotations(frame_data):
         
     if frame_data.is_smoke_detected:
         cv2.rectangle(frame, (w - 330, 28), (w - 190, 48), (0, 0, 255), -1)
-        cv2.putText(frame, "FIRE/SMOKE HAZARD", (w - 320, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
+        cv2.putText(frame, "SMOKE WARNING", (w - 320, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
+        
+    if frame_data.is_fire_detected:
+        cv2.rectangle(frame, (w - 330, 28), (w - 190, 48), (0, 0, 255), -1)
+        cv2.putText(frame, "FIRE WARNING", (w - 320, 42), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)
 
+    
 def main():
     parser = argparse.ArgumentParser(description="Hackatum safety monitoring computer vision pipeline.")
     parser.add_argument("--mock", action="store_true", help="Run with simulated warehouse video and inputs")

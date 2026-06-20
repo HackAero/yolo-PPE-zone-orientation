@@ -19,7 +19,12 @@ class EnvironmentBehaviorMonitor:
         self.fall_frame_count: Dict[int, int] = {}
         self._frame_counter = 0
         self._last_smoke_detected = False
+        self._last_fire_detected = False
         self._last_person_pose: Dict[int, dict] = {}
+        
+        # Counters for temporal confirmation
+        self.smoke_frame_count = 0  
+        self.fire_frame_count = 0
 
         if not use_mock:
             self.pose_model = None
@@ -54,17 +59,10 @@ class EnvironmentBehaviorMonitor:
             "verbose": False,
         }
 
+
     def _run_smoke_detection(self, frame_data: FrameData) -> None:
         if self.use_mock:
-            if frame_data.is_smoke_detected:
-                alert = {
-                    "type": "ENVIRONMENT_ALERT",
-                    "severity": "Critical",
-                    "message": "DANGER: Smoke / Fire fumes detected in visual feed!",
-                    "timestamp": frame_data.timestamp,
-                }
-                frame_data.alerts.append(alert)
-            return
+            pass 
 
         run_smoke = (self._frame_counter - 1) % config.SMOKE_INFERENCE_INTERVAL == 0
 
@@ -74,30 +72,66 @@ class EnvironmentBehaviorMonitor:
             and frame_data.raw_frame.size > 0
         ):
             sf_results = self.smoke_fire_model(frame_data.raw_frame, **self._yolo_kwargs())[0]
-            self._last_smoke_detected = len(sf_results.boxes) > 0
-            frame_data.is_smoke_detected = self._last_smoke_detected
+            
+            # Reset current frame state
+            current_smoke = False
+            current_fire = False
 
-            if self._last_smoke_detected:
-                for box in sf_results.boxes:
-                    cls_id = int(box.cls[0])
-                    class_name = sf_results.names[cls_id]
-                    confidence = float(box.conf[0])
+            for box in sf_results.boxes:
+                cls_id = int(box.cls[0])
+                class_name = sf_results.names[cls_id]
+                confidence = float(box.conf[0])
+                
+                if class_name == 'smoke' and confidence >= config.SMOKE_CONF_THRESHOLD :
+                    current_smoke = True
+                        
+                elif class_name == 'fire' and confidence >= config.FIRE_CONF_THRESHOLD :
+                    current_fire = True
 
-                    if confidence >= 0.40:
-                        alert = {
-                            "type": "ENVIRONMENT_ALERT",
-                            "severity": "Critical",
-                            "message": (
-                                f"DANGER: {class_name.upper()} detected in visual feed! "
-                                f"(Confidence: {confidence:.2f})"
-                            ),
-                            "timestamp": frame_data.timestamp,
-                        }
-                        frame_data.alerts.append(alert)
-                        break
-        else:
-            frame_data.is_smoke_detected = self._last_smoke_detected
+            # --- TEMPORAL BUFFER LOGIC ---
+            
+            # 1. Handle Smoke Counter
+            if current_smoke:
+                self.smoke_frame_count += 1
+            else:
+                self.smoke_frame_count = 0 # Reset if it disappears
+                
+            # 2. Handle Fire Counter
+            if current_fire:
+                self.fire_frame_count += 1
+            else:
+                self.fire_frame_count = 0 # Reset if it disappears
+                
+            # 3. Trigger Alerts ONLY if thresholds are met
+            if self.smoke_frame_count >= config.SMOKE_CONFIRMATION_FRAMES:
+                frame_data.alerts.append({
+                    "type": "ENVIRONMENT_ALERT",
+                    "severity": "Critical",
+                    "message": f"DANGER: Persistent SMOKE detected! ({self.smoke_frame_count} consecutive checks)",
+                    "timestamp": frame_data.timestamp,
+                })
+                # Optional: prevent alert spam by resetting counter after alerting, 
+                # or keep it high to send continuous alerts.
+                self.smoke_frame_count = 0 
+                
+            if self.fire_frame_count >= config.FIRE_CONFIRMATION_FRAMES:
+                frame_data.alerts.append({
+                    "type": "ENVIRONMENT_ALERT",
+                    "severity": "Critical",
+                    "message": f"DANGER: Persistent FIRE detected! ({self.fire_frame_count} consecutive checks)",
+                    "timestamp": frame_data.timestamp,
+                })
+                self.fire_frame_count = 0
 
+            # Update class cache
+            self._last_smoke_detected = current_smoke
+            self._last_fire_detected = current_fire
+
+        # Always update frame_data with the latest known state
+        frame_data.is_smoke_detected = self._last_smoke_detected
+        setattr(frame_data, 'is_fire_detected', self._last_fire_detected)
+        
+        
     def _collect_pose_crops(
         self, frame_data: FrameData
     ) -> Tuple[List[TrackedPerson], List[np.ndarray]]:

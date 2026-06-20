@@ -241,7 +241,8 @@ class MockPipelineGenerator:
             raw_frame=raw_frame,
             processed_frame=raw_frame.copy(),
             persons=tracked_persons,
-            is_smoke_detected=self.smoke_active
+            is_smoke_detected=self.smoke_active,
+            is_fire_detected=self.smoke_active
         )
         
         return data

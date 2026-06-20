@@ -46,7 +46,8 @@ class FrameData:
     # --- Environmental Conditions (Person 5) ---
     blur_score: float = 0.0            # Variance of Laplacian score
     is_image_blurry: bool = False      # Bad quality (smudge, out of focus)
-    is_smoke_detected: bool = False    # Fire or smoke detected
+    is_smoke_detected: bool = False    # Fire detected
+    is_fire_detected: bool = False     # Fire detected
     
     # --- Integration Counters & Flags (Person 1) ---
     current_people_count: int = 0
