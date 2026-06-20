@@ -57,9 +57,9 @@ class TattooDetector:
             verbose=False,
         )[0]
 
-        combined_mask = np.zeros((crop_h, crop_w), dtype=bool)
+        combined_mask = np.zeros((crop_h, crop_w), dtype=np.uint8)
         if result.masks is None:
-            return combined_mask
+            return combined_mask.astype(bool)
 
         for mask_probability in result.masks.data.cpu().numpy():
             if mask_probability.shape != (crop_h, crop_w):
@@ -68,9 +68,68 @@ class TattooDetector:
                     (crop_w, crop_h),
                     interpolation=cv2.INTER_LINEAR,
                 )
-            combined_mask |= mask_probability >= config.TATTOO_MASK_THRESHOLD
+            combined_mask = np.maximum(
+                combined_mask,
+                (mask_probability >= config.TATTOO_MASK_THRESHOLD).astype(np.uint8),
+            )
 
-        return combined_mask
+        # Smooth jagged masks and keep contiguous tattoo-like regions.
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+        combined_mask = cv2.dilate(combined_mask, kernel, iterations=1)
+
+        min_pixels = int(getattr(config, "TATTOO_MIN_MASK_PIXELS", 64))
+        if int(combined_mask.sum()) < min_pixels:
+            return np.zeros((crop_h, crop_w), dtype=bool)
+
+        return combined_mask.astype(bool)
+
+
+def _fallback_bbox_rois(person, frame_shape):
+    """Fallback ROIs when keypoints are missing: upper arms + forearms + calves."""
+    if person is None or person.bbox is None or len(person.bbox) != 4:
+        return []
+
+    frame_h, frame_w = frame_shape[:2]
+    xmin, ymin, xmax, ymax = person.bbox
+    xmin = max(0, min(int(xmin), frame_w - 1))
+    xmax = max(0, min(int(xmax), frame_w - 1))
+    ymin = max(0, min(int(ymin), frame_h - 1))
+    ymax = max(0, min(int(ymax), frame_h - 1))
+    if xmax <= xmin or ymax <= ymin:
+        return []
+
+    pw = xmax - xmin
+    ph = ymax - ymin
+
+    # Approximate bilateral limb strips within a standing person bbox.
+    left_x1 = xmin + int(pw * 0.05)
+    left_x2 = xmin + int(pw * 0.33)
+    right_x1 = xmin + int(pw * 0.67)
+    right_x2 = xmin + int(pw * 0.95)
+
+    upper_y1 = ymin + int(ph * 0.22)
+    upper_y2 = ymin + int(ph * 0.45)
+    fore_y1 = ymin + int(ph * 0.45)
+    fore_y2 = ymin + int(ph * 0.70)
+    calf_y1 = ymin + int(ph * 0.70)
+    calf_y2 = ymin + int(ph * 0.95)
+
+    candidates = [
+        ("left", "upper_arm", [left_x1, upper_y1, left_x2, upper_y2]),
+        ("left", "forearm", [left_x1, fore_y1, left_x2, fore_y2]),
+        ("right", "upper_arm", [right_x1, upper_y1, right_x2, upper_y2]),
+        ("right", "forearm", [right_x1, fore_y1, right_x2, fore_y2]),
+        ("left", "calf", [left_x1, calf_y1, left_x2, calf_y2]),
+        ("right", "calf", [right_x1, calf_y1, right_x2, calf_y2]),
+    ]
+
+    rois = []
+    for side, segment, bbox in candidates:
+        x1, y1, x2, y2 = bbox
+        if x2 > x1 and y2 > y1:
+            rois.append({"side": side, "segment": segment, "bbox": bbox})
+    return rois
 
 
 def _segment_bbox(
@@ -185,4 +244,9 @@ def build_leg_rois(person, frame_shape):
 
 def build_tattoo_rois(person, frame_shape):
     """Return every arm and leg ROI inspected by the tattoo detector."""
-    return build_arm_rois(person, frame_shape) + build_leg_rois(person, frame_shape)
+    rois = build_arm_rois(person, frame_shape) + build_leg_rois(person, frame_shape)
+    if rois:
+        return rois
+    if bool(getattr(config, "TATTOO_FALLBACK_BBOX_ROIS", True)):
+        return _fallback_bbox_rois(person, frame_shape)
+    return []

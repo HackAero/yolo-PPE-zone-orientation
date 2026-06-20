@@ -36,29 +36,27 @@ class EnvironmentBehaviorMonitor:
                 self.pose_model = None
 
             root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            smoke_fire_path = os.path.join(root_dir, "models/fire_smoke.pt")
-            smoke_fire_fallback = os.path.join("models", "fire_smoke.pt")
+            smoke_fire_abs = os.path.join(root_dir, "models/fire_smoke.pt")
+            smoke_fire_rel = os.path.join("models", "fire_smoke.pt")
 
-            if os.path.exists(smoke_fire_path):
-                print(f"[Environment] Loading Fire/Smoke Model from: {smoke_fire_path}")
+            candidates = [smoke_fire_rel, smoke_fire_abs]
+            tried = []
+            for candidate in candidates:
+                tried.append(candidate)
+                if not os.path.exists(candidate):
+                    continue
                 try:
-                    self.smoke_fire_model = YOLO(smoke_fire_path)
+                    print(f"[Environment] Loading Fire/Smoke Model from: {candidate}")
+                    self.smoke_fire_model = YOLO(candidate)
+                    break
                 except Exception as exc:
-                    print(
-                        "[Environment] Fire/Smoke absolute path failed; "
-                        f"retrying fallback path '{smoke_fire_fallback}': {exc}"
-                    )
-                    try:
-                        self.smoke_fire_model = YOLO(smoke_fire_fallback)
-                    except Exception as fallback_exc:
-                        print(
-                            "[Environment] Could not initialize Fire/Smoke model "
-                            f"from fallback path: {fallback_exc}"
-                        )
-                        self.smoke_fire_model = None
-            else:
-                print(f"[Environment] Fire/Smoke model not found at: {smoke_fire_path}")
-                self.smoke_fire_model = None
+                    print(f"[Environment] Fire/Smoke load failed for '{candidate}': {exc}")
+
+            if self.smoke_fire_model is None:
+                print(
+                    "[Environment] Fire/Smoke model unavailable. "
+                    f"Checked: {', '.join(tried)}"
+                )
         else:
             print("[Environment] Running in MOCK mode.")
             self.pose_model = None
@@ -197,6 +195,11 @@ class EnvironmentBehaviorMonitor:
 
         for person in frame_data.persons:
             xmin, ymin, xmax, ymax = person.bbox
+            w = xmax - xmin
+            h = ymax - ymin
+            # Skip only tiny crops that are too small for stable pose inference.
+            if w < 24 or h < 48:
+                continue
 
             pxmin = max(0, xmin)
             pymin = max(0, ymin)

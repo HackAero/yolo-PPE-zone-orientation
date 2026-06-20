@@ -161,11 +161,9 @@ class RobotDispatcher:
         try:
             import paho.mqtt.client as mqtt
         except ImportError:
-            print("\n" + "!" * 60)
-            print("  [Dispatcher] paho-mqtt NOT INSTALLED — MQTT disabled!")
-            print("  robot_dashboard.html will stay on STANDBY.")
-            print("  Fix:  pip install paho-mqtt")
-            print("!" * 60 + "\n")
+            print("[Dispatcher] MQTT disabled: missing dependency 'paho-mqtt'.")
+            print("[Dispatcher] Install with: pip install paho-mqtt")
+            print("[Dispatcher] Falling back to console dispatch backend.")
             self.backend = "console"
             return
 

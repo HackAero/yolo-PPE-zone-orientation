@@ -19,8 +19,8 @@ if FAST_MODE:
     PPE_CROP_MAX_PERSONS = 5
     PERSON_DETECT_INTERVAL = 1
     FACE_DETECT_INTERVAL = 4
-    POSE_INFERENCE_INTERVAL = 5
-    SMOKE_INFERENCE_INTERVAL = 10
+    POSE_INFERENCE_INTERVAL = 2
+    SMOKE_INFERENCE_INTERVAL = 2
     COMPLIANCE_HEURISTIC_INTERVAL = 1
     ASYNC_FRAME_GRAB = True
 elif SMOOTH_MODE:
@@ -101,8 +101,10 @@ BLUR_TATOOS = True                  # Prototype: blur pose-derived arm regions
 TATTOO_MODEL_PATH = "models/tattoo_model.pt"
 TATTOO_CONF_THRESHOLD = 0.25        # Favor clear tattoos and reduce false positives
 TATTOO_MASK_THRESHOLD = 0.35        # Segmentation mask binarization threshold
+TATTOO_MIN_MASK_PIXELS = 64         # Ignore tiny masks that are usually detector noise
 TATTOO_INPUT_SIZE = 640             # YOLO tattoo inference resolution
 TATTOO_FAIL_CLOSED = True           # Blur full ROI if tattoo inference/mask fails
+TATTOO_FALLBACK_BBOX_ROIS = True    # Use bbox-based limb ROIs when pose keypoints are missing
 ARM_ROI_PADDING_RATIO = 0.15        # Tighter padding for cleaner arm crops
 ARM_ROI_MIN_PADDING = 12            # Minimum arm ROI padding in pixels
 LEG_ROI_PADDING_RATIO = 0.15        # Padding relative to each leg segment length
