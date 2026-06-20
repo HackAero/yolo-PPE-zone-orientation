@@ -35,6 +35,15 @@ class RobotDispatcher:
         if self.backend == "mqtt":
             self._init_mqtt()
 
+        if getattr(config, "ENABLE_TTS_SIREN", False):
+            try:
+                import os
+                os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
+                import pygame
+                pygame.mixer.init()
+            except Exception as e:
+                print(f"[Dispatcher] Failed to init pygame: {e}")
+
         print(f"[Dispatcher] Initialized. Backend='{self.backend}', "
               f"Team='{config.TEAM_ID}', Zone='{config.ZONE_ID}', "
               f"Topic='{config.DISPATCH_MQTT_TOPIC}'")
@@ -69,6 +78,11 @@ class RobotDispatcher:
                 return False
 
             self._cooldown_map[cooldown_key] = now
+
+        # Fire off our "wow factor" hackathon notifications
+        if alert_type in ["FALL_DETECTED", "RESTRICTED_ENTRY"]:
+            msg = "Warning. Critical Fall Detected in Sector A." if alert_type == "FALL_DETECTED" else "Warning. Unauthorized access in restricted zone."
+            self._trigger_wow_factor(msg)
 
         payload = {
             "team_id": config.TEAM_ID,
@@ -157,6 +171,28 @@ class RobotDispatcher:
 
         import threading
         t = threading.Thread(target=_do_post)
+        t.daemon = True
+        t.start()
+
+    # ------------------------------------------------------------------
+    # Hackathon "Wow Factor" Notifications
+    # ------------------------------------------------------------------
+
+    def _trigger_wow_factor(self, message: str) -> None:
+        if getattr(config, "ENABLE_TTS_SIREN", False):
+            self._play_tts(message)
+
+    def _play_tts(self, message: str) -> None:
+        def _play_mp3():
+            try:
+                import pygame
+                pygame.mixer.music.load(r"C:\Users\noell\Documents\Code\hackatum\data\spongebobalarm.mp3")
+                pygame.mixer.music.play()
+                while pygame.mixer.music.get_busy():
+                    pygame.time.Clock().tick(10)
+            except Exception as e:
+                print(f"[Dispatcher] MP3 playback failed: {e}")
+        t = threading.Thread(target=_play_mp3)
         t.daemon = True
         t.start()
 

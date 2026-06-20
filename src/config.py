@@ -4,8 +4,8 @@ from typing import Optional
 # --- Performance / Inference ---
 # FAST_MODE: tuned for laptop CPU + webcam (skip frames, smaller YOLO input).
 # Flip SMOOTH_MODE on if you have a GPU and want heavier models every frame.
-FAST_MODE = False
-SMOOTH_MODE = True
+FAST_MODE = True
+SMOOTH_MODE = False
 
 YOLO_DEVICE = "cpu"
 
@@ -17,7 +17,7 @@ if FAST_MODE:
     PPE_INFERENCE_INTERVAL = 5
     PPE_CROP_PASS = True
     PPE_CROP_MAX_PERSONS = 5
-    PERSON_DETECT_INTERVAL = 1
+    PERSON_DETECT_INTERVAL = 2
     FACE_DETECT_INTERVAL = 1
     POSE_INFERENCE_INTERVAL = 3
     SMOKE_INFERENCE_INTERVAL = 3
@@ -85,6 +85,14 @@ PPE_GLASSES_AREA_MIN = 0.0015
 PPE_GLASSES_AREA_MAX = 0.14
 # Require repeated evidence before marking PPE as present.
 PPE_CONFIRM_FRAMES = 1
+# ==============================================================================
+# "WOW FACTOR" HACKATHON NOTIFICATIONS
+# ==============================================================================
+ENABLE_TTS_SIREN = True
+
+# ==============================================================================
+# PIPELINE STAGES & SCHEDULING
+# ==============================================================================
 # Require repeated misses before clearing PPE presence.
 PPE_CLEAR_FRAMES = 4
 PPE_USE_GLASSES_HEURISTIC = False
@@ -100,7 +108,7 @@ PRIVACY_FACE_CACHE_FRAMES = 8       # Keep the last face location through short 
 PRIVACY_FACE_SMOOTHING_ALPHA = 0.7  # Weight of the latest face detection in EMA smoothing
 BLUR_TATOOS = True                  # Prototype: blur pose-derived arm regions
 TATTOO_MODEL_PATH = "models/tattoo_model.pt"
-TATTOO_CONF_THRESHOLD = 0.25        # Favor clear tattoos and reduce false positives
+TATTOO_CONF_THRESHOLD = 0.10        # Hypersensitive for hackathon blackout marker demos
 TATTOO_MASK_THRESHOLD = 0.35        # Segmentation mask binarization threshold
 TATTOO_MIN_MASK_PIXELS = 64         # Ignore tiny masks that are usually detector noise
 TATTOO_INPUT_SIZE = 640             # YOLO tattoo inference resolution

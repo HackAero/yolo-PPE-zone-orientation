@@ -182,10 +182,10 @@ class SharedPPEDetector:
         person_width = max(1, px2 - px1)
         person_height = max(1, py2 - py1)
 
-        x1 = max(0, int(px1 - person_width * 0.10))
-        y1 = max(0, int(py1 - person_height * 0.12))
-        x2 = min(width, int(px2 + person_width * 0.10))
-        y2 = min(height, int(py1 + person_height * 0.68))
+        x1 = max(0, int(px1 - person_width * 0.30))
+        y1 = max(0, int(py1 - person_height * 0.20))
+        x2 = min(width, int(px2 + person_width * 0.30))
+        y2 = min(height, int(py1 + person_height * 0.85))
 
         if x2 <= x1 or y2 <= y1:
             return None, (0, 0)
