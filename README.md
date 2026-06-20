@@ -8,6 +8,7 @@ A real-time, multi-stage Computer Vision pipeline built to enhance warehouse and
 - **PPE Compliance**: Detects safety helmets and glasses using a custom YOLO model, with a color-heuristic fallback.
 - **Fall Detection**: Analyzes human pose (shoulders/hips) using YOLO-Pose to detect workers lying on the floor.
 - **Environmental Safety**: Monitors camera quality (blur/smudges) and detects smoke/fire using a dedicated YOLO model.
+- **Graceful Degradation**: Enters a visible **LIMITED reliability mode** when vision quality is poor, reducing noisy non-critical dispatch while keeping critical alerts active.
 - **Privacy Anonymization**: Automatically blurs faces and optionally blurs exposed tattoos.
 
 - **Robot Dispatch & MQTT Integration**: Sends structured JSON signals (fall, restricted entry, no helmet, fire/smoke) to a robot team via MQTT. Includes a built‑in robot simulator and a live browser dashboard.

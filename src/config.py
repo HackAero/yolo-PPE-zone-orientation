@@ -16,7 +16,7 @@ if FAST_MODE:
     PPE_INFERENCE_INTERVAL = 2
     PPE_CROP_PASS = False
     PPE_CROP_MAX_PERSONS = 0
-    PERSON_DETECT_INTERVAL = 2
+    PERSON_DETECT_INTERVAL = 1
     FACE_DETECT_INTERVAL = 4
     POSE_INFERENCE_INTERVAL = 1
     SMOKE_INFERENCE_INTERVAL = 1
@@ -138,6 +138,13 @@ ALERT_VERIFY_CRITICAL_FRAMES = 1
 ALERT_VERIFY_WARNING_FRAMES = 2
 # Reset verifier state if an alert signature disappears longer than this.
 ALERT_VERIFY_STALE_SECONDS = 1.5
+
+# --- Reliability Degradation ---
+# If vision quality/noise is poor for sustained frames, switch to LIMITED mode.
+RELIABILITY_BLUR_FRAMES = 3
+RELIABILITY_VERIFYING_THRESHOLD = 4
+# In LIMITED mode, suppress warning-level robot dispatch to reduce noisy actions.
+RELIABILITY_SUPPRESS_WARNING_DISPATCH = True
 
 # --- Tracker Maintenance ---
 # How often (in detection frames) to prune stale ByteTrack IDs from internal

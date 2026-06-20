@@ -177,6 +177,8 @@ class SupervisorReplayRecorder:
 
 def build_critical_event(frame_data):
     event_time = datetime.fromtimestamp(frame_data.timestamp).strftime("%H:%M:%S")
+    reliability_mode = str(frame_data.extra_metadata.get("reliability_mode", "NORMAL"))
+    confidence = "MEDIUM" if reliability_mode == "LIMITED" else "HIGH"
 
     for alert in frame_data.alerts:
         alert_type = str(alert.get("type", ""))
@@ -190,7 +192,7 @@ def build_critical_event(frame_data):
                     "summary": f"Smoke/fire detected at {event_time} in camera view",
                     "where": "camera_view",
                     "who": "environment",
-                    "confidence": "HIGH",
+                    "confidence": confidence,
                     "action": "DISPATCH ROVER / EVACUATE",
                 }
             continue
@@ -203,7 +205,7 @@ def build_critical_event(frame_data):
                 "summary": f"Worker {person_id} fell in zone {zone} at {event_time}",
                 "where": zone,
                 "who": f"worker_{person_id}",
-                "confidence": "HIGH",
+                "confidence": confidence,
                 "action": "CHECK WORKER NOW",
             }
 
@@ -215,7 +217,7 @@ def build_critical_event(frame_data):
                 "summary": f"Worker {person_id} critical alert in zone {zone_id} at {event_time}",
                 "where": zone_id,
                 "who": f"worker_{person_id}",
-                "confidence": "HIGH",
+                "confidence": confidence,
                 "action": "DISPATCH ROVER",
             }
 
@@ -302,6 +304,9 @@ def render_annotations(frame_data):
     verifying_count = int(frame_data.extra_metadata.get("verifying_count", 0) or 0)
     if verifying_count > 0:
         tags.append((f"VERIFY {verifying_count}", (0, 200, 255)))
+    reliability_mode = str(frame_data.extra_metadata.get("reliability_mode", "NORMAL"))
+    if reliability_mode == "LIMITED":
+        tags.append(("LIMITED MODE", (80, 80, 255)))
     if frame_data.is_smoke_detected:
         tags.append(("SMOKE", (0, 0, 255)))
     if frame_data.is_image_blurry:

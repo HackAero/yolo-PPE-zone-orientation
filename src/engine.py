@@ -53,6 +53,7 @@ class SafetyPipelineEngine:
         )
         self.dispatcher = RobotDispatcher()
         self.alert_filter = AlertVerificationFilter()
+        self._degraded_blur_streak = 0
         self._frame_grabber: Optional[LatestFrameGrabber] = None
 
         if self.use_mock:
@@ -166,6 +167,8 @@ class SafetyPipelineEngine:
         frame_data = self.alert_filter.apply(frame_data)
         stage_ms["alert_verify"] = int((time.time() - t0) * 1000)
 
+        self._update_reliability_mode(frame_data)
+
         slowest = max(stage_ms, key=stage_ms.get) if stage_ms else "unknown"
         frame_data.extra_metadata["slowest_stage"] = slowest
 
@@ -173,7 +176,30 @@ class SafetyPipelineEngine:
         
         return frame_data
 
+    def _update_reliability_mode(self, frame_data: FrameData) -> None:
+        if frame_data.is_image_blurry:
+            self._degraded_blur_streak += 1
+        else:
+            self._degraded_blur_streak = max(0, self._degraded_blur_streak - 1)
+
+        verifying_count = int(frame_data.extra_metadata.get("verifying_count", 0) or 0)
+        limited_by_blur = self._degraded_blur_streak >= max(1, config.RELIABILITY_BLUR_FRAMES)
+        limited_by_noise = verifying_count >= max(1, config.RELIABILITY_VERIFYING_THRESHOLD)
+        is_limited = limited_by_blur or limited_by_noise
+
+        reasons = []
+        if limited_by_blur:
+            reasons.append("blur")
+        if limited_by_noise:
+            reasons.append("low_confidence")
+
+        frame_data.extra_metadata["reliability_mode"] = "LIMITED" if is_limited else "NORMAL"
+        frame_data.extra_metadata["reliability_reason"] = ",".join(reasons) if reasons else "stable"
+
     def _dispatch_confirmed_alerts(self, frame_data: FrameData) -> None:
+        is_limited = frame_data.extra_metadata.get("reliability_mode") == "LIMITED"
+        suppress_warnings = bool(config.RELIABILITY_SUPPRESS_WARNING_DISPATCH)
+
         for alert in frame_data.alerts:
             alert_type = str(alert.get("type", ""))
             person_id_raw = alert.get("person_id", -1)
@@ -192,6 +218,8 @@ class SafetyPipelineEngine:
                 continue
 
             if alert_type in {"PPE_VIOLATION", "ZONE_PPE_VIOLATION"}:
+                if is_limited and suppress_warnings:
+                    continue
                 msg = str(alert.get("message", "")).lower()
                 if "helmet" in msg:
                     self.dispatcher.send(alert_type="NO_HELMET", person_id=person_id, zone_id=zone_id)
