@@ -60,8 +60,8 @@ PPE_MODEL_PATH = "models/ppe_model.pt"
 POSE_MODEL_PATH = "yolov8n-pose.pt"
 
 # --- Camera Pre-processing ---
-CAMERA_CONTRAST = 1.2   # 1.0 is default, >1.0 increases contrast
-CAMERA_BRIGHTNESS = 20  # 0 is default, >0 increases brightness
+CAMERA_CONTRAST = 1.0   # 1.0 is default, >1.0 increases contrast
+CAMERA_BRIGHTNESS = 0  # 0 is default, >0 increases brightness
 
 # --- Confidence & Detection Thresholds ---
 PERSON_CONF_THRESHOLD = 0.45

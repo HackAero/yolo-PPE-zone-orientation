@@ -159,20 +159,31 @@ class SupervisorReplayRecorder:
         self._saved_text = f"REPLAY SAVED: {os.path.basename(replay_path)}"
 
     def draw_overlay(self, frame, timestamp):
-        if timestamp <= self._popup_until_ts and self._popup_lines:
-            line_height = 24
-            panel_h = 18 + line_height * len(self._popup_lines)
-            panel_w = max(420, int(frame.shape[1] * 0.55))
-            cv2.rectangle(frame, (12, 90), (12 + panel_w, 90 + panel_h), (0, 0, 255), -1)
-            for i, text in enumerate(self._popup_lines):
-                y = 90 + 24 + i * line_height
-                scale = 0.6 if i == 0 else 0.48
-                thick = 2 if i == 0 else 1
-                cv2.putText(frame, text, (24, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thick)
+        w = frame.shape[1]
+        x_right = w - 8
+        y_pos = 32 # Positioned cleanly under the top row of pills
+        font_scale = 0.3
 
         if timestamp <= self._saved_until_ts and self._saved_text:
-            cv2.rectangle(frame, (12, 64), (620, 86), (0, 120, 0), -1)
-            cv2.putText(frame, self._saved_text, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1)
+            text = self._saved_text
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+            cv2.rectangle(frame, (x_right - tw - 10, y_pos), (x_right, y_pos + th + 10), (0, 120, 0), -1)
+            cv2.putText(frame, text, (x_right - tw - 5, y_pos + th + 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+            y_pos += th + 15
+
+        if timestamp <= self._popup_until_ts and self._popup_lines:
+            line_height = 14
+            pill_h = 10 + line_height * len(self._popup_lines)
+            
+            max_w = 0
+            for line in self._popup_lines:
+                (tw, _), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+                max_w = max(max_w, tw)
+                
+            cv2.rectangle(frame, (x_right - max_w - 10, y_pos), (x_right, y_pos + pill_h), (0, 0, 180), -1)
+            
+            for i, line in enumerate(self._popup_lines):
+                cv2.putText(frame, line, (x_right - max_w - 5, y_pos + 12 + i * line_height), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
 
 
 def build_critical_event(frame_data):
@@ -239,12 +250,14 @@ def draw_corner_brackets(frame, xmin, ymin, xmax, ymax, color, thickness=2, leng
 
 
 def render_annotations(frame_data):
-    """Render only essential safety information with low visual noise."""
+    """Renders sleek, minimalist annotations grouped into a single HUD."""
     frame = frame_data.processed_frame
     h, w = frame.shape[:2]
 
+    draw_zones_overlay(frame, frame_data)
+
     overlay = frame.copy()
-    danger_count = 0
+    danger_area_count = 0
 
     for person in frame_data.persons:
         xmin, ymin, xmax, ymax = person.bbox
@@ -252,17 +265,16 @@ def render_annotations(frame_data):
         has_yellow_vest = person.metadata.get("has_yellow_vest")
 
         is_safe = True
-        status = "SAFE"
-        color = (40, 185, 40)
+        color = (0, 200, 0)
 
         if person.is_fallen:
             is_safe = False
-            status = "FALL"
             color = (0, 0, 255)
+            danger_area_count += 1
         elif zone_id == "restricted":
             is_safe = False
-            status = "RESTRICTED"
             color = (0, 0, 255)
+            danger_area_count += 1
         elif zone_id == "work_floor":
             violations = []
             if person.has_helmet is not True:
@@ -273,54 +285,82 @@ def render_annotations(frame_data):
                 violations.append("NO VEST")
             if violations:
                 is_safe = False
-                status = "/".join(violations)
                 color = (0, 140, 255)
+                danger_area_count += 1
 
-        if not is_safe:
-            danger_count += 1
+        if is_safe:
+            draw_corner_brackets(frame, xmin, ymin, xmax, ymax, color, thickness=1, length=10)
+        else:
             cv2.rectangle(overlay, (xmin, ymin), (xmax, ymax), color, -1)
 
-        cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), color, 1)
-        label = f"{worker_label(person.person_id)} {status}"
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
-        ly = ymin - 6
-        if ly - th - 6 < 0:
-            ly = min(h - 4, ymax + th + 8)
-        cv2.rectangle(frame, (xmin, ly - th - 5), (xmin + tw + 8, ly + 2), color, -1)
-        cv2.putText(frame, label, (xmin + 4, ly - 1), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+        cv2.putText(
+            frame,
+            worker_label(person.person_id),
+            (xmin, max(10, ymin - 4)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.25,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
 
-    cv2.addWeighted(overlay, 0.12, frame, 0.88, 0, frame)
+    cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
 
-    stats = f"LIVE {frame_data.current_people_count} | TOTAL {frame_data.total_unique_people}"
-    cv2.putText(frame, stats, (10, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (235, 235, 235), 1)
-
-    if danger_count > 0:
-        alert = f"ALERT {danger_count}"
-        (aw, ah), _ = cv2.getTextSize(alert, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 1)
-        cv2.rectangle(frame, (10, 24), (22 + aw, 26 + ah), (0, 0, 255), -1)
-        cv2.putText(frame, alert, (16, 24 + ah - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1)
-
-    tags = []
-    verifying_count = int(frame_data.extra_metadata.get("verifying_count", 0) or 0)
-    if verifying_count > 0:
-        tags.append((f"VERIFY {verifying_count}", (0, 200, 255)))
-    reliability_mode = str(frame_data.extra_metadata.get("reliability_mode", "NORMAL"))
-    if reliability_mode == "LIMITED":
-        tags.append(("LIMITED MODE", (80, 80, 255)))
-    if frame_data.is_smoke_detected:
-        tags.append(("SMOKE", (0, 0, 255)))
-    if frame_data.is_image_blurry:
-        tags.append(("BLUR", (0, 140, 255)))
-    x = w - 10
-    for text, color in tags:
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-        cv2.rectangle(frame, (x - tw - 12, 8), (x, 12 + th), color, -1)
-        cv2.putText(frame, text, (x - tw - 7, 10 + th), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        x -= (tw + 18)
+    font_scale = 0.3
+    y_top = 8
+    x_left = 8
 
     fps = frame_data.extra_metadata.get("fps", 0)
-    latency = frame_data.extra_metadata.get("latency_ms", 0)
-    cv2.putText(frame, f"{fps} FPS | {latency} ms", (10, h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (170, 170, 170), 1)
+    lat = frame_data.extra_metadata.get("latency_ms", 0)
+    stats_text = f"LIVE: {frame_data.current_people_count} | FPS: {fps} | LAT: {lat}ms"
+    (tw, th), _ = cv2.getTextSize(stats_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+    cv2.rectangle(frame, (x_left, y_top), (x_left + tw + 10, y_top + th + 10), (0, 0, 0), -1)
+    cv2.putText(frame, stats_text, (x_left + 5, y_top + th + 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (200, 200, 200), 1, cv2.LINE_AA)
+
+    x_left += tw + 15
+
+    layout = frame_data.extra_metadata.get("zone_layout_label", "MODE: UNKNOWN")
+    (tw, th), _ = cv2.getTextSize(layout, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+    cv2.rectangle(frame, (x_left, y_top), (x_left + tw + 10, y_top + th + 10), (0, 0, 0), -1)
+    cv2.putText(frame, layout, (x_left + 5, y_top + th + 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+
+    x_right = w - 8
+
+    verifying_count = int(frame_data.extra_metadata.get("verifying_count", 0) or 0)
+    if verifying_count > 0:
+        text = f"VERIFY {verifying_count}"
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+        cv2.rectangle(frame, (x_right - tw - 10, y_top), (x_right, y_top + th + 10), (0, 200, 255), -1)
+        cv2.putText(frame, text, (x_right - tw - 5, y_top + th + 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+        x_right -= (tw + 15)
+
+    reliability_mode = str(frame_data.extra_metadata.get("reliability_mode", "NORMAL"))
+    if reliability_mode == "LIMITED":
+        text = "LIMITED"
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+        cv2.rectangle(frame, (x_right - tw - 10, y_top), (x_right, y_top + th + 10), (80, 80, 255), -1)
+        cv2.putText(frame, text, (x_right - tw - 5, y_top + th + 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+        x_right -= (tw + 15)
+
+    if frame_data.is_image_blurry:
+        text = "BLUR/FOG"
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+        cv2.rectangle(frame, (x_right - tw - 10, y_top), (x_right, y_top + th + 10), (0, 140, 255), -1)
+        cv2.putText(frame, text, (x_right - tw - 5, y_top + th + 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+        x_right -= (tw + 15)
+
+    if frame_data.is_smoke_detected:
+        text = "FIRE/SMOKE"
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+        cv2.rectangle(frame, (x_right - tw - 10, y_top), (x_right, y_top + th + 10), (0, 0, 255), -1)
+        cv2.putText(frame, text, (x_right - tw - 5, y_top + th + 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+        x_right -= (tw + 15)
+
+    if danger_area_count > 0:
+        text = f"{danger_area_count} IN DANGER"
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+        cv2.rectangle(frame, (x_right - tw - 10, y_top), (x_right, y_top + th + 10), (0, 0, 255), -1)
+        cv2.putText(frame, text, (x_right - tw - 5, y_top + th + 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
 
 
 def main():
