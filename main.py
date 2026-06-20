@@ -102,7 +102,7 @@ def render_annotations(frame_data):
             (rw, rh), _ = cv2.getTextSize(raw_legend, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
             cv2.rectangle(frame, (10, h - lh - rh - 30), (10 + rw + 14, h - lh - 26), (0, 0, 0), -1)
             cv2.putText(frame, raw_legend, (17, h - lh - 33), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (235, 235, 235), 1)
-    
+
     # 1. Draw Bounding Boxes and Labels for Tracked Persons
     for person in frame_data.persons:
         xmin, ymin, xmax, ymax = person.bbox
@@ -213,6 +213,7 @@ def render_annotations(frame_data):
     cv2.putText(frame, perf_str, (w - pw - 10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 150, 150), 1)
     
 def main():
+    window_name = "MTU Room Monitor"
     parser = argparse.ArgumentParser(description="Hackatum safety monitoring computer vision pipeline.")
     parser.add_argument("--mock", action="store_true", help="Run with simulated warehouse video and inputs")
     parser.add_argument("--source", type=str, default=None, help="Video source (e.g. '0' for webcam, or path to file)")
@@ -248,6 +249,9 @@ def main():
     print("Press 'q' in the window to quit.")
     print("Consuming feed...")
     print("="*50 + "\n")
+
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, 1800, 1350)
     
     try:
         for frame_data in stream:
@@ -262,7 +266,14 @@ def main():
                               f"[{alert['severity']}] {alert['message']}")
             
             # Display image
-            cv2.imshow("MTU Room Monitor", frame_data.processed_frame)
+            display_frame = cv2.resize(
+                frame_data.processed_frame,
+                None,
+                fx=2.0,
+                fy=2.0,
+                interpolation=cv2.INTER_LINEAR,
+            )
+            cv2.imshow(window_name, display_frame)
             
             # Read keyboard quit input
             if cv2.waitKey(1) & 0xFF == ord('q'):
