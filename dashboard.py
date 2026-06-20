@@ -88,6 +88,44 @@ with col_analytics:
     st.subheader("📉 Danger Histogram")
     danger_histogram_placeholder = st.empty()
     danger_trend_placeholder = st.empty()
+    with st.expander("Scoring Legend (How Danger Is Calculated)", expanded=False):
+        st.markdown(
+            """
+**Alert Weights (Verification Points + Danger):**
+- Environment alert (fire/smoke): +50
+- Restricted entry: +40
+- Fall alert: +35
+- Zone PPE violation: +15
+- PPE violation: +15
+- Environment warning: +5
+
+**Zone-Aware Person Risk (Per Frame):**
+- Restricted zone base: +28
+- Work floor base: +10
+- Safe zone base: +2
+- Restricted/no-entry presence bonus: +18
+- Missing helmet base: +20
+- Missing glasses base: +18
+- Missing vest base: +4
+
+**Zone Multipliers for Missing PPE:**
+- Restricted zone: x2.2
+- Work floor: x1.3
+- Safe/other: x1.0
+
+**Additional Effects:**
+- Fall detected on person: +30
+- Fully compliant worker in work floor: -4
+- Active verifying alerts: up to +10
+
+**Danger Bands:**
+- 0-10 Safe
+- 11-25 Low
+- 26-45 Medium
+- 46-70 High
+- 71-100 Critical
+            """
+        )
 
     st.divider()
     st.subheader("⚠️ Active Safety Violations & Alerts")

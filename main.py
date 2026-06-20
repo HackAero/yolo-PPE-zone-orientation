@@ -29,10 +29,16 @@ class SupervisorReplayRecorder:
         self._popup_lines = []
         self._saved_until_ts = 0.0
         self._saved_text = ""
+        self._frame_stride = max(1, int(getattr(config, "REPLAY_BUFFER_STRIDE", 1)))
+        self._frame_counter = 0
 
         os.makedirs(self.output_dir, exist_ok=True)
 
     def add_frame(self, timestamp, frame):
+        self._frame_counter += 1
+        if self._frame_counter % self._frame_stride != 0:
+            return
+
         frame_copy = frame.copy()
         self._pre_buffer.append((timestamp, frame_copy))
 
@@ -435,6 +441,7 @@ def main():
     )
     stream = engine.stream_frames()
     replay = SupervisorReplayRecorder()
+    alert_log_last_ts = {}
 
     print("\n" + "=" * 50)
     print("MTU Pipeline Engine Active.")
@@ -458,10 +465,21 @@ def main():
             if frame_data.alerts:
                 for alert in frame_data.alerts:
                     if not alert.get("debounced", False):
-                        print(
-                            f"[{time.strftime('%H:%M:%S', time.localtime(alert['timestamp']))}] "
-                            f"[{alert['severity']}] {alert['message']}"
+                        alert_key = (
+                            str(alert.get("type", "")),
+                            str(alert.get("person_id", "-1")),
+                            str(alert.get("zone_id", "")),
                         )
+                        now_ts = float(alert.get("timestamp", frame_data.timestamp))
+                        min_interval = float(getattr(config, "ALERT_LOG_MIN_INTERVAL_SECONDS", 0.0))
+                        last_ts = float(alert_log_last_ts.get(alert_key, 0.0))
+
+                        if min_interval <= 0.0 or (now_ts - last_ts) >= min_interval:
+                            print(
+                                f"[{time.strftime('%H:%M:%S', time.localtime(alert['timestamp']))}] "
+                                f"[{alert['severity']}] {alert['message']}"
+                            )
+                            alert_log_last_ts[alert_key] = now_ts
 
             cv2.imshow(window_name, frame_data.processed_frame)
 

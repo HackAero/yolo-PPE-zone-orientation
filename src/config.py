@@ -17,11 +17,11 @@ if FAST_MODE:
     PPE_INFERENCE_INTERVAL = 5
     PPE_CROP_PASS = True
     PPE_CROP_MAX_PERSONS = 5
-    PERSON_DETECT_INTERVAL = 1
-    FACE_DETECT_INTERVAL = 4
-    POSE_INFERENCE_INTERVAL = 2
-    SMOKE_INFERENCE_INTERVAL = 2
-    COMPLIANCE_HEURISTIC_INTERVAL = 1
+    PERSON_DETECT_INTERVAL = 2
+    FACE_DETECT_INTERVAL = 6
+    POSE_INFERENCE_INTERVAL = 3
+    SMOKE_INFERENCE_INTERVAL = 3
+    COMPLIANCE_HEURISTIC_INTERVAL = 2
     ASYNC_FRAME_GRAB = True
 elif SMOOTH_MODE:
     YOLO_IMGSZ = 384
@@ -52,8 +52,9 @@ else:
     COMPLIANCE_HEURISTIC_INTERVAL = 1
     ASYNC_FRAME_GRAB = False
 
-REID_INFERENCE_INTERVAL = 2
+REID_INFERENCE_INTERVAL = 4
 REID_STABLE_TRACK_FRAMES = 5
+REID_USE_CNN = not FAST_MODE
 
 # --- Model Configurations ---
 PPE_MODEL_PATH = "models/ppe_model.pt"
@@ -178,6 +179,12 @@ RELIABILITY_SUPPRESS_WARNING_DISPATCH = True
 # How often (in detection frames) to prune stale ByteTrack IDs from internal
 # dicts. ByteTrack IDs are monotonically increasing so old ones accumulate.
 TRACKER_PRUNE_INTERVAL = 500
+
+# --- Runtime Responsiveness ---
+# Store every Nth frame in replay pre-buffer to reduce copy overhead.
+REPLAY_BUFFER_STRIDE = 2
+# Limit repeated alert prints to avoid terminal I/O stalls.
+ALERT_LOG_MIN_INTERVAL_SECONDS = 1.0
 
 # --- Robot Dispatch ---
 # Identity

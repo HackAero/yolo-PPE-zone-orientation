@@ -51,7 +51,7 @@ class PersonTracker:
             
             # Initialize MobileNetV3 CNN Re-ID model
             self.reid_model = None
-            if HAS_TORCH:
+            if HAS_TORCH and bool(getattr(config, "REID_USE_CNN", True)):
                 try:
                     print("[Tracker] Loading MobileNetV3 Re-ID feature extractor (ImageNet weights)...")
                     # Load model
@@ -76,7 +76,7 @@ class PersonTracker:
                     print(f"[Tracker] Error initializing CNN model: {e}. Falling back to Spatial Color Histograms.")
                     self.reid_model = None
             else:
-                print("[Tracker] PyTorch/Torchvision unavailable. Falling back to Spatial Color Histograms.")
+                print("[Tracker] Using lightweight Spatial Color Histogram Re-ID.")
         else:
             print("[Tracker] Running in MOCK mode.")
             self.model = None
@@ -221,6 +221,29 @@ class PersonTracker:
         # --- REAL DETECTION AND TRACKING PIPELINE ---
         frame = frame_data.raw_frame
         self._frame_counter += 1
+
+        run_detect = (self._frame_counter - 1) % max(1, int(config.PERSON_DETECT_INTERVAL)) == 0
+        if not run_detect and self._last_persons_snapshot:
+            # Reuse latest tracked snapshot on skipped frames to keep UI fluid.
+            frame_data.persons = [
+                TrackedPerson(
+                    person_id=p.person_id,
+                    bbox=list(p.bbox),
+                    confidence=float(p.confidence),
+                    has_helmet=p.has_helmet,
+                    has_glasses=p.has_glasses,
+                    compliance_violations=list(p.compliance_violations),
+                    is_fallen=p.is_fallen,
+                    keypoints=p.keypoints.copy() if p.keypoints is not None else None,
+                    embedding=p.embedding,
+                    reid_matched=p.reid_matched,
+                    metadata=dict(p.metadata),
+                )
+                for p in self._last_persons_snapshot
+            ]
+            frame_data.current_people_count = len(frame_data.persons)
+            frame_data.total_unique_people = len(self.confirmed_ids)
+            return frame_data
         
         # Run inference
         results = self.model(
@@ -361,7 +384,22 @@ class PersonTracker:
         frame_data.persons = active_persons
         frame_data.current_people_count = len(active_persons)
         frame_data.total_unique_people = len(self.confirmed_ids)
-        self._last_persons_snapshot = active_persons
+        self._last_persons_snapshot = [
+            TrackedPerson(
+                person_id=p.person_id,
+                bbox=list(p.bbox),
+                confidence=float(p.confidence),
+                has_helmet=p.has_helmet,
+                has_glasses=p.has_glasses,
+                compliance_violations=list(p.compliance_violations),
+                is_fallen=p.is_fallen,
+                keypoints=p.keypoints.copy() if p.keypoints is not None else None,
+                embedding=p.embedding,
+                reid_matched=p.reid_matched,
+                metadata=dict(p.metadata),
+            )
+            for p in active_persons
+        ]
 
         # Periodically prune stale ByteTrack IDs to prevent memory growth.
         # ByteTrack assigns monotonically increasing IDs — old entries never
