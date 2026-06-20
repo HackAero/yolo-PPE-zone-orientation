@@ -304,7 +304,30 @@
       background: var(--red);
       transition: width linear;
     }
+    
+    /* --- FLOATING ALERT PARTICLES --- */
+    .floating-particle {
+      position: fixed;
+      bottom: -50px;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0;
+      animation: float-up forwards;
+    }
 
+    @keyframes float-up {
+      0% { 
+        transform: translateY(0) scale(0.8) rotate(-15deg); 
+        opacity: 0; 
+      }
+      20% { 
+        opacity: 1; 
+      }
+      100% { 
+        transform: translateY(-50vh) scale(1.5) rotate(15deg); /* Floats halfway up the screen */
+        opacity: 0; 
+      }
+    }
     #hero-card.alert-ppe #alert-countdown-fill {
       background: var(--amber);
     }
@@ -550,7 +573,10 @@
         <div class="stat-value" id="stat-team">&mdash;</div>
         <div class="stat-unit">signal origin</div>
       </div>
-      <div class="stat-card" id="robot-card" style="border-color: var(--emerald); transition: all 0.3s ease;">
+
+    </div>
+
+    <div class="stat-card" id="robot-card" style="border-color: var(--emerald); transition: all 0.3s ease;">
         <div class="stat-label">Robot Live Status</div>
         <div class="stat-value" id="robot-state" style="font-size: 20px;">IDLE</div>
         <div style="display: flex; justify-content: space-between; margin-top: 4px;">
@@ -561,7 +587,6 @@
         
         <div style="height: 4px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden;">
           <div id="robot-progress-fill" style="height: 100%; width: 0%; background: var(--emerald); transition: width 0.5s linear;"></div>
-      </div>
       </div>
     </div>
 
@@ -605,6 +630,7 @@
   const ALERT_DURATION_MS = 15000;
 
   let totalDispatches = 0;
+  let emojiInterval = null;
   let alertTimer = null;
 
   const statusPill      = document.getElementById('connection-status-pill');
@@ -753,11 +779,15 @@
         heroIcon.textContent = '🚨';
         heroStatusLabel.textContent = 'FALL DETECTED!';
         heroSubtext.textContent = 'Robot dispatching to Zone ' + zone;
+        if (!emojiInterval) emojiInterval = setInterval(() => spawnParticle('fall'), 250);
       } else if (severity === 'fire') {
         heroCard.classList.add('alert');
         heroIcon.textContent = alertType === 'SMOKE_DETECTED' ? '💨' : '🔥';
         heroStatusLabel.textContent = alertType === 'SMOKE_DETECTED' ? 'SMOKE DETECTED!' : 'FIRE DETECTED!';
         heroSubtext.textContent = 'EVACUATE IMMEDIATELY — Zone ' + zone;
+
+        const particleType = alertType === 'SMOKE_DETECTED' ? 'smoke' : 'fire';
+        if (!emojiInterval) emojiInterval = setInterval(() => spawnParticle(particleType), 250);
       } else if (severity === 'restricted') {
         heroCard.classList.add('alert');
         heroIcon.textContent = '⛔';
@@ -790,6 +820,44 @@
 
     alertTimer = setTimeout(resetHeroToStandby, ALERT_DURATION_MS);
   }
+ 
+  function spawnParticle(type) {
+    const particle = document.createElement('div');
+    particle.className = 'floating-particle';
+    
+    // Choose the emoji and glow effect based on the emergency type
+    if (type === 'fire') {
+      particle.textContent = '🔥';
+      particle.style.filter = 'drop-shadow(0 0 5px rgba(245, 158, 11, 0.4))'; // Amber glow
+    } else if (type === 'smoke') {
+      particle.textContent = '💨'; 
+      particle.style.filter = 'drop-shadow(0 0 5px rgba(161, 161, 170, 0.5))';
+    } else if (type === 'fall') {
+      // Pick a random medical emoji for variety
+      const medEmojis = ['✚', '🩹', '🚑'];
+      particle.textContent = medEmojis[Math.floor(Math.random() * medEmojis.length)];
+      particle.style.color = '#f7f5f5'; // Make the heavy cross red
+      particle.style.filter = 'drop-shadow(0 0 5px rgba(239, 68, 68, 0.4))'; // Red glow
+    }
+    
+    
+    // Randomize position to keep the middle clear (0-15vw or 80-95vw)
+    if (Math.random() > 0.5) {
+      particle.style.left = (Math.random() * 15) + 'vw'; // Far left side
+    } else {
+      particle.style.left = (Math.random() * 15 + 80) + 'vw'; // Far right side
+    }
+    particle.style.fontSize = (Math.random() * 20 + 20) + 'px'; 
+    const duration = (Math.random() * 2 + 2); 
+    particle.style.animationDuration = duration + 's';
+    
+    document.body.appendChild(particle);
+
+    // Cleanup after it floats away
+    setTimeout(() => {
+      if (particle.parentNode) particle.parentNode.removeChild(particle);
+    }, duration * 1000);
+  }
 
   function resetHeroToStandby() {
     heroCard.classList.remove('alert', 'alert-ppe');
@@ -798,6 +866,12 @@
     heroStatusLabel.textContent = 'STANDBY';
     heroSubtext.textContent = 'Awaiting signal from vision pipeline…';
     detailTeam.textContent = detailZone.textContent = detailPerson.textContent = '—';
+
+    if (emojiInterval) {
+      clearInterval(emojiInterval);
+      emojiInterval = null;
+    }
+    document.querySelectorAll('.floating-particle').forEach(el => el.remove());
   }
 
   function appendLogRow(time, team, zone, alertType, person) {

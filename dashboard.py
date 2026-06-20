@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import time
+from collections import deque
 from src.engine import SafetyPipelineEngine
 from src.session_labels import worker_label
 from main import render_annotations, SupervisorReplayRecorder, build_critical_event
@@ -35,6 +36,7 @@ st.sidebar.divider()
 st.sidebar.subheader("Safety Rules Thresholds")
 conf_threshold = st.sidebar.slider("Person Detection Conf", 0.1, 1.0, 0.4, 0.05)
 blur_intensity = st.sidebar.slider("Privacy Blur Intensity", 15, 101, 51, 2)  # Odd number
+danger_window_minutes = st.sidebar.slider("Danger Histogram Window (min)", 1, 30, 5, 1)
 censorship_mode = st.sidebar.radio(
     "Face censorship",
     ("Blur", "Garfield"),
@@ -75,11 +77,18 @@ with col_analytics:
         current_workers_metric = st.empty()
         safety_rating_metric = st.empty()
         fire_alarm_metric = st.empty()
+        verification_points_metric = st.empty()
     with m_col2:
         unique_total_metric = st.empty()
         fps_metric = st.empty()
         tattoo_blur_metric = st.empty()
+        danger_score_metric = st.empty()
         
+    st.divider()
+    st.subheader("📉 Danger Histogram")
+    danger_histogram_placeholder = st.empty()
+    danger_trend_placeholder = st.empty()
+
     st.divider()
     st.subheader("⚠️ Active Safety Violations & Alerts")
     # Running alerts box
@@ -107,6 +116,130 @@ if run_pipeline:
     
     # Store running alert history
     alert_history = []
+    danger_history = deque(maxlen=3600)
+    verification_points_total = 0
+
+    alert_weights = {
+        "ENVIRONMENT_ALERT": 50,
+        "RESTRICTED_ENTRY": 40,
+        "FALL_ALERT": 35,
+        "ZONE_PPE_VIOLATION": 15,
+        "PPE_VIOLATION": 15,
+        "ENVIRONMENT_WARNING": 5,
+    }
+
+    zone_base_risk = {
+        "restricted": 28,
+        "work_floor": 10,
+        "safe": 2,
+    }
+
+    zone_violation_risk = {
+        "Helmet": 20,
+        "Glasses": 18,
+        "Vest": 4,
+    }
+
+    def compute_frame_scores(frame_data):
+        verification_points = 0
+        danger_points = 0
+
+        for alert in frame_data.alerts:
+            if alert.get("debounced", False):
+                continue
+
+            alert_type = str(alert.get("type", ""))
+            severity = str(alert.get("severity", "Warning")).upper()
+            weight = int(alert_weights.get(alert_type, 8 if severity == "WARNING" else 12))
+
+            verification_points += weight
+            danger_points += weight
+
+        # Zone-aware person risk: staying in restricted area is intrinsically
+        # more dangerous, and missing PPE there is penalized much more.
+        for person in frame_data.persons:
+            zone_id = str(person.metadata.get("zone_id", "safe"))
+            zone_violations = list(person.metadata.get("zone_violations", []))
+            zone_forbidden = bool(person.metadata.get("zone_forbidden", False))
+
+            person_risk = int(zone_base_risk.get(zone_id, 4))
+
+            if zone_forbidden or zone_id == "restricted":
+                # No-entry area: high baseline risk just by presence.
+                person_risk += 18
+
+            for violation in zone_violations:
+                v = str(violation)
+                base = int(zone_violation_risk.get(v, 8))
+                if zone_forbidden or zone_id == "restricted":
+                    # Missing PPE in restricted zone must dominate histogram.
+                    person_risk += int(base * 2.2)
+                elif zone_id == "work_floor":
+                    person_risk += int(base * 1.3)
+                else:
+                    person_risk += base
+
+            if person.is_fallen:
+                person_risk += 30
+
+            # Reward compliance in non-restricted areas.
+            if zone_id == "work_floor" and not zone_violations:
+                person_risk = max(0, person_risk - 4)
+
+            danger_points += person_risk
+            verification_points += max(0, person_risk // 3)
+
+        verifying_count = int(frame_data.extra_metadata.get("verifying_count", 0) or 0)
+        if verifying_count > 0:
+            danger_points += min(10, verifying_count * 2)
+
+        danger_score = int(max(0, min(100, danger_points)))
+        return verification_points, danger_score
+
+    def render_danger_histogram(history, now_ts, window_minutes):
+        window_seconds = int(window_minutes * 60)
+        recent = [item for item in history if now_ts - item[0] <= window_seconds]
+
+        if not recent:
+            return None, None
+
+        scores = [item[1] for item in recent]
+        bins = {
+            "Safe (0-10)": 0,
+            "Low (11-25)": 0,
+            "Medium (26-45)": 0,
+            "High (46-70)": 0,
+            "Critical (71-100)": 0,
+        }
+        for s in scores:
+            if s <= 10:
+                bins["Safe (0-10)"] += 1
+            elif s <= 25:
+                bins["Low (11-25)"] += 1
+            elif s <= 45:
+                bins["Medium (26-45)"] += 1
+            elif s <= 70:
+                bins["High (46-70)"] += 1
+            else:
+                bins["Critical (71-100)"] += 1
+
+        hist_df = pd.DataFrame(
+            {"Range": list(bins.keys()), "Frames": list(bins.values())}
+        ).set_index("Range")
+
+        trend_bucket = {}
+        for ts, score, _vpts in recent:
+            minute_bucket = int(ts // 60)
+            trend_bucket.setdefault(minute_bucket, []).append(score)
+
+        trend_rows = []
+        for bucket in sorted(trend_bucket.keys()):
+            avg_score = float(np.mean(trend_bucket[bucket]))
+            label = time.strftime("%H:%M", time.localtime(bucket * 60))
+            trend_rows.append((label, avg_score))
+
+        trend_df = pd.DataFrame(trend_rows, columns=["Time", "DangerScore"]).set_index("Time")
+        return hist_df, trend_df
     
     try:
         for frame_data in stream:
@@ -139,7 +272,7 @@ if run_pipeline:
             rgb_frame = cv2.cvtColor(frame_data.processed_frame, cv2.COLOR_BGR2RGB)
             
             # Display image in Streamlit
-            frame_placeholder.image(rgb_frame, channels="RGB", use_column_width=True)
+            frame_placeholder.image(rgb_frame, channels="RGB", width="stretch")
             
             # Update metrics
             current_workers_metric.metric("Workers Present", frame_data.current_people_count)
@@ -171,6 +304,49 @@ if run_pipeline:
                 delta="SMOKE/FIRE" if fire_active else "No hazard",
                 delta_color="inverse" if fire_active else "off",
             )
+
+            frame_verification_points, frame_danger_score = compute_frame_scores(frame_data)
+            verification_points_total += frame_verification_points
+            danger_history.append((float(frame_data.timestamp), frame_danger_score, frame_verification_points))
+
+            verification_points_metric.metric(
+                "Verification Points",
+                f"{verification_points_total}",
+                delta=f"+{frame_verification_points}/frame" if frame_verification_points > 0 else "0/frame",
+                delta_color="off",
+            )
+
+            danger_label = "SAFE"
+            if frame_danger_score > 70:
+                danger_label = "CRITICAL"
+            elif frame_danger_score > 45:
+                danger_label = "HIGH"
+            elif frame_danger_score > 25:
+                danger_label = "MEDIUM"
+            elif frame_danger_score > 10:
+                danger_label = "LOW"
+
+            danger_score_metric.metric(
+                "Danger Score",
+                f"{frame_danger_score}",
+                delta=danger_label,
+                delta_color="inverse" if frame_danger_score > 45 else "off",
+            )
+
+            hist_df, trend_df = render_danger_histogram(
+                danger_history,
+                float(frame_data.timestamp),
+                danger_window_minutes,
+            )
+            if hist_df is not None:
+                danger_histogram_placeholder.bar_chart(hist_df)
+            else:
+                danger_histogram_placeholder.info("Collecting danger data...")
+
+            if trend_df is not None and not trend_df.empty:
+                danger_trend_placeholder.line_chart(trend_df)
+            else:
+                danger_trend_placeholder.info("Collecting danger trend...")
 
             tattoo_enabled = bool(frame_data.extra_metadata.get("privacy_tattoo_blur_enabled", False))
             tattoo_ready = bool(frame_data.extra_metadata.get("privacy_tattoo_detector_ready", False))
@@ -234,7 +410,7 @@ if run_pipeline:
             if manifest_data:
                 df = pd.DataFrame(manifest_data)
                 # Display table without index
-                table_placeholder.dataframe(df, use_container_width=True, hide_index=True)
+                table_placeholder.dataframe(df, width="stretch", hide_index=True)
             else:
                 table_placeholder.info("No personnel currently registered in monitored area.")
                 
