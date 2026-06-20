@@ -1,3 +1,10 @@
+"""
+Safety pipeline engine — runs each frame through a fixed sequence of stages.
+
+Order matters: PPE and compliance run before zones (zones need helmet/glasses/vest
+flags), environment and falls after tracking, privacy last so the displayed frame
+is blurred. MQTT dispatch is triggered from zones and from confirmed env alerts.
+"""
 import cv2
 import time
 from typing import Generator, Optional

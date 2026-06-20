@@ -2,8 +2,9 @@ import os
 from typing import Optional
 
 # --- Performance / Inference ---
+# FAST_MODE: tuned for laptop CPU + webcam (skip frames, smaller YOLO input).
+# Flip SMOOTH_MODE on if you have a GPU and want heavier models every frame.
 FAST_MODE = True
-# Keep the PPE path simple and responsive.
 SMOOTH_MODE = False
 
 YOLO_DEVICE = "cpu"

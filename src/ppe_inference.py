@@ -1,3 +1,9 @@
+"""
+One shared PPE YOLO pass per frame (or every N frames in FAST_MODE).
+
+Assigns helmet/goggles flags to tracked persons by box overlap. Compliance.py
+handles vest color and heuristics when the model misses something.
+"""
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple

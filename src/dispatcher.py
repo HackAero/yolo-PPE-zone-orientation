@@ -1,16 +1,9 @@
 """
-dispatcher.py — Robot Dispatch Signal Module
-=============================================
-Sends a structured JSON signal to the robot team whenever a fall is detected
-in the vision pipeline.
+Publish safety alerts to the robot team (MQTT by default).
 
-Backend is pluggable via config.DISPATCH_BACKEND:
-  - "console"   → Print the payload to stdout (default, no dependencies)
-  - "mqtt"      → Publish to an MQTT topic via paho-mqtt
-  - "http"      → POST to a REST endpoint via requests
-
-For the hackathon demo, "mqtt" connects to the free HiveMQ public broker and
-the robot_dashboard.html file on any other laptop will receive the signal live.
+Payload is small JSON: team_id, zone_id, alert_type, person label. HiveMQ public
+broker + robot_dashboard.html means any laptop on the internet can show live
+dispatches without us running a server.
 """
 
 import json

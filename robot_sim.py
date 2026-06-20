@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-robot_sim.py – Dummy Robot Simulator
-Subscribes to dispatch signals and simulates robot movement.
-Publishes status updates for the dashboard.
+Stand-in for the physical rover during demos.
+
+Listens on hackatum/robot/dispatch, fakes drive time + on-scene actions, publishes
+status to hackatum/robot/status so robot_dashboard.html can show ETA / siren.
 """
 
 import json

@@ -1,8 +1,11 @@
 """
-Zone map (B-lite): vertical bands across the full camera frame.
+Zone map ("B-lite") — safety rules tied to regions in the camera image.
 
-Press 'w' in main.py to cycle:
-  split (3 zones) -> full safe -> full work -> full restricted -> split ...
+We draw vertical bands on the frame (see zones/*.json) instead of a factory floor
+plan because we had no SLAM or robot pose at the hackathon. Bbox center picks
+the zone; rules differ per zone (PPE required or not, restricted entry alerts).
+
+Press w in main.py to cycle: 3 bands → full safe → full work → full restricted.
 """
 
 import json
