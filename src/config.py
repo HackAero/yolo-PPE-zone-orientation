@@ -147,6 +147,7 @@ DISPATCH_COOLDOWN_SECONDS = 15
 DISPATCH_MQTT_BROKER = "broker.hivemq.com"
 DISPATCH_MQTT_PORT = 8884          # 8884 = WebSocket + TLS (wss://)
 DISPATCH_MQTT_TOPIC = "hackatum/robot/dispatch"
+DISPATCH_MQTT_STATUS_TOPIC = "hackatum/robot/status"
 DISPATCH_MQTT_USE_WS = True        # Use WebSocket transport (required for browser dashboard)
 DISPATCH_MQTT_USE_TLS = True       # TLS on port 8884
 

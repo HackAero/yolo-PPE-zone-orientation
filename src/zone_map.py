@@ -247,10 +247,12 @@ class ZoneMonitor:
                 self._restricted_inside[person.person_id] = False
 
             zone_violations = []
-            if zone.require_helmet and person.has_helmet is False:
+            if zone.require_helmet and person.has_helmet is not True:
                 zone_violations.append("Helmet")
-            if zone.require_glasses and person.has_glasses is False:
+            if zone.require_glasses and person.has_glasses is not True:
                 zone_violations.append("Glasses")
+            if zone.id in ("work_floor", "restricted") and person.metadata.get("has_yellow_vest") is False:
+                zone_violations.append("Vest")
 
             person.metadata["zone_violations"] = zone_violations
 
@@ -271,7 +273,11 @@ class ZoneMonitor:
                     "timestamp": frame_data.timestamp,
                 })
                 if dispatcher is not None:
-                    alert_type = "NO_HELMET" if violation == "Helmet" else "NO_GLASSES"
+                    alert_type = {
+                        "Helmet": "NO_HELMET",
+                        "Glasses": "NO_GLASSES",
+                        "Vest": "NO_VEST",
+                    }.get(violation, "ZONE_PPE_VIOLATION")
                     dispatcher.send(
                         alert_type=alert_type,
                         person_id=person.person_id,

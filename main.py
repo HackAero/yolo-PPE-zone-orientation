@@ -309,9 +309,9 @@ def render_annotations(frame_data):
             danger_area_count += 1
         elif zone_id == "work_floor":
             viols = []
-            if person.has_helmet is False:
+            if person.has_helmet is not True:
                 viols.append("NO HELMET")
-            if person.has_glasses is False:
+            if person.has_glasses is not True:
                 viols.append("NO GLASSES")
             if has_yellow_vest is False:
                 viols.append("NO VEST")

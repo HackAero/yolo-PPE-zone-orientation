@@ -84,7 +84,7 @@ class PPEComplianceChecker:
         person_h = ymax - ymin
 
         head_ymin = ymin
-        head_ymax = ymin + int(person_h * 0.2)
+        head_ymax = ymin + int(person_h * 0.15)
         head_xmin = xmin + int(person_w * 0.15)
         head_xmax = xmax - int(person_w * 0.15)
 
@@ -121,7 +121,7 @@ class PPEComplianceChecker:
             return False
 
         ratio = color_pixels / total_pixels
-        if ratio < 0.22:
+        if ratio < 0.28:
             return False
 
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -280,15 +280,21 @@ class PPEComplianceChecker:
                 if person.has_glasses is None:
                     person.has_glasses = True
             else:
-                if not person.has_helmet:
+                # Helmet: only use color heuristic when the YOLO model did not run
+                # (None). If the model explicitly found no helmet (False), trust it —
+                # the head-region HSV heuristic false-positives on hair/skin/lighting.
+                if person.has_helmet is None:
                     if run_heuristics:
                         person.has_helmet = self._detect_helmet_heuristic(
                             frame_data.raw_frame, person.bbox
                         )
-                        # Only cache freshly computed heuristic results
                         person.metadata["cached_helmet"] = person.has_helmet
                     elif "cached_helmet" in person.metadata:
                         person.has_helmet = person.metadata["cached_helmet"]
+                    else:
+                        person.has_helmet = False
+                elif person.has_helmet is False:
+                    person.metadata["cached_helmet"] = False
 
                 if not person.has_glasses:
                     if run_heuristics:

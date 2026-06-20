@@ -72,6 +72,16 @@ Streamlit dashboard:
 streamlit run dashboard.py
 ```
 
+Robot dispatch demo (vision → MQTT → dummy rover → dashboard):
+```bash
+pip install paho-mqtt   # required for MQTT dispatch
+.venv/bin/python robot_sim.py          # terminal 1: fake rover
+.venv/bin/python main.py --mock        # terminal 2: vision pipeline
+# open robot_dashboard.html in a browser
+```
+
+Topics: `hackatum/robot/dispatch` (alerts from pipeline), `hackatum/robot/status` (rover ETA/state).
+
 ## Privacy & security
 
 This system watches a real work area, so we kept a few things in mind:

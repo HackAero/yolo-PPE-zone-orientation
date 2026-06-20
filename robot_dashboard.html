@@ -497,7 +497,10 @@
       <button onclick="triggerTest('FALL_DETECTED')">Simulate Fall</button>
       <button onclick="triggerTest('NO_HELMET')">Simulate No Helmet</button>
       <button onclick="triggerTest('NO_GLASSES')">Simulate No Glasses</button>
+      <button onclick="triggerTest('NO_VEST')">Simulate No Vest</button>
+      <button onclick="triggerTest('RESTRICTED_ENTRY')">Simulate Restricted</button>
       <button onclick="triggerTest('FIRE_DETECTED')">Simulate Fire</button>
+      <button onclick="triggerTest('SMOKE_DETECTED')">Simulate Smoke</button>
       <button onclick="triggerTestReset()">Reset</button>
     </div>
   </div>
@@ -598,6 +601,7 @@
 <script>
   const MQTT_BROKER_URL = 'wss://broker.hivemq.com:8884/mqtt';
   const MQTT_TOPIC = 'hackatum/robot/dispatch';
+  const MQTT_STATUS_TOPIC = 'hackatum/robot/status';
   const ALERT_DURATION_MS = 15000;
 
   let totalDispatches = 0;
@@ -633,7 +637,7 @@
     client.on('connect', () => {
       setConnectionStatus('connected', 'Connected');
       client.subscribe(MQTT_TOPIC, { qos: 1 });
-      client.subscribe('hackatum/robot/status', { qos: 1 }); 
+      client.subscribe(MQTT_STATUS_TOPIC, { qos: 1 }); 
     });
 
     client.on('reconnect', () => setConnectionStatus('connecting', 'Reconnecting…'));
@@ -643,7 +647,7 @@
     client.on('message', (topic, message) => {
       
       // 1. Handle incoming robot status updates
-      if (topic === 'hackatum/robot/status') {
+      if (topic === MQTT_STATUS_TOPIC) {
         try {
           const status = JSON.parse(message.toString());
           updateRobotStatus(status);
@@ -670,7 +674,7 @@
         let severity = 'ppe';
         if (alert_type === 'FALL_DETECTED') severity = 'fall';
         else if (alert_type === 'RESTRICTED_ENTRY') severity = 'restricted';
-        else if (alert_type === 'FIRE_DETECTED') severity = 'fire';
+        else if (alert_type === 'FIRE_DETECTED' || alert_type === 'SMOKE_DETECTED') severity = 'fire';
 
         triggerHeroAlert(team_id, zone_id, personDisplay, alert_type, severity);
         appendLogRow(time, team_id, zone_id, alert_type, personDisplay);
@@ -702,7 +706,12 @@
       }
 
       // Handle the state colors and progress bar
-      if (state === 'EN_ROUTE') {
+      if (state === 'DANGER') {
+        stateEl.style.color = '#ef4444';
+        etaEl.textContent = 'EVACUATE';
+        progressFill.style.width = '100%';
+        if (window.robotTimer) clearInterval(window.robotTimer);
+      } else if (state === 'EN_ROUTE') {
         stateEl.style.color = '#f59e0b'; // amber
         etaEl.textContent = `ETA ${eta}s`;
         
@@ -744,21 +753,24 @@
         heroIcon.textContent = '🚨';
         heroStatusLabel.textContent = 'FALL DETECTED!';
         heroSubtext.textContent = 'Robot dispatching to Zone ' + zone;
-      }else if (severity === 'fire') {
+      } else if (severity === 'fire') {
         heroCard.classList.add('alert');
-        heroIcon.textContent = '🔥';
-        heroStatusLabel.textContent = 'FIRE DETECTED!';
+        heroIcon.textContent = alertType === 'SMOKE_DETECTED' ? '💨' : '🔥';
+        heroStatusLabel.textContent = alertType === 'SMOKE_DETECTED' ? 'SMOKE DETECTED!' : 'FIRE DETECTED!';
         heroSubtext.textContent = 'EVACUATE IMMEDIATELY — Zone ' + zone;
       } else if (severity === 'restricted') {
-      heroCard.classList.add('alert');
-      heroIcon.textContent = '⛔';
-      heroStatusLabel.textContent = 'RESTRICTED ENTRY';
-      heroSubtext.textContent = 'Unauthorized entry — Zone ' + zone;
+        heroCard.classList.add('alert');
+        heroIcon.textContent = '⛔';
+        heroStatusLabel.textContent = 'RESTRICTED ENTRY';
+        heroSubtext.textContent = 'Unauthorized entry — Zone ' + zone;
       } else {
         heroCard.classList.add('alert-ppe');
         if (alertType === 'NO_HELMET') {
           heroIcon.textContent = '👷';
           heroStatusLabel.textContent = 'NO HELMET';
+        } else if (alertType === 'NO_VEST') {
+          heroIcon.textContent = '🦺';
+          heroStatusLabel.textContent = 'NO VEST';
         } else {
           heroIcon.textContent = '👓';
           heroStatusLabel.textContent = 'NO GLASSES';
@@ -795,7 +807,7 @@
       <td>${esc(time)}</td>
       <td><strong>${esc(String(team))}</strong></td>
       <td>${esc(String(zone))}</td>
-      <td><span class="badge ${ (alertType === 'FALL_DETECTED' || alertType === 'FIRE_DETECTED' || alertType === 'RESTRICTED_ENTRY') ? 'badge-fall' : 'badge-ppe'}"></td>
+      <td><span class="badge ${ (alertType === 'FALL_DETECTED' || alertType === 'FIRE_DETECTED' || alertType === 'SMOKE_DETECTED' || alertType === 'RESTRICTED_ENTRY') ? 'badge-fall' : 'badge-ppe'}">${esc(String(alertType))}</span></td>
       <td>${esc(String(person))}</td>
     `;
     logTableBody.insertBefore(tr, logTableBody.firstChild);
@@ -825,7 +837,9 @@
       client.publish(MQTT_TOPIC, JSON.stringify(payload), { qos: 1 });
     } else {
       // Offline fallback
-      const severity = alertType === 'FALL_DETECTED' ? 'fall' : 'ppe';
+      const severity = alertType === 'FALL_DETECTED' ? 'fall'
+        : alertType === 'RESTRICTED_ENTRY' ? 'restricted'
+        : (alertType === 'FIRE_DETECTED' || alertType === 'SMOKE_DETECTED') ? 'fire' : 'ppe';
       triggerHeroAlert(payload.team_id, payload.zone_id, payload.person_id, payload.alert_type, severity);
       appendLogRow(new Date().toLocaleTimeString(), payload.team_id, payload.zone_id, payload.alert_type, payload.person_id);
     }

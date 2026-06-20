@@ -179,9 +179,13 @@ class SafetyPipelineEngine:
                 if not alert.get("debounced", False):
                     msg = alert["message"].upper()
                     if "SMOKE" in msg:
-                        self.dispatcher.send(alert_type="SMOKE_DETECTED", person_id=-1)
+                        self.dispatcher.send(
+                            alert_type="SMOKE_DETECTED", person_id=-1, zone_id="environment"
+                        )
                     elif "FIRE" in msg:
-                        self.dispatcher.send(alert_type="FIRE_DETECTED", person_id=-1)
+                        self.dispatcher.send(
+                            alert_type="FIRE_DETECTED", person_id=-1, zone_id="environment"
+                        )
         
         return frame_data
 
