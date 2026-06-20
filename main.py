@@ -21,32 +21,6 @@ def draw_corner_brackets(frame, xmin, ymin, xmax, ymax, color, thickness=2, leng
     cv2.line(frame, (xmax, ymax), (xmax, ymax - length), color, thickness)
 
 
-def classify_camera_zone(bbox, frame_width, frame_height):
-    xmin, ymin, xmax, ymax = bbox
-    center_x = (xmin + xmax) / 2
-    box_height = max(1, ymax - ymin)
-
-    if center_x < frame_width / 3:
-        horizontal_zone = "LEFT"
-    elif center_x < (frame_width * 2) / 3:
-        horizontal_zone = "CENTER"
-    else:
-        horizontal_zone = "RIGHT"
-
-    near_threshold = frame_height * 0.45
-    mid_threshold = frame_height * 0.28
-    if box_height >= near_threshold:
-        distance_zone = "NEAR"
-    elif box_height >= mid_threshold:
-        distance_zone = "MID"
-    else:
-        distance_zone = "FAR"
-
-    return f"{distance_zone}-{horizontal_zone}"
-
-
-def is_danger_area(zone_text):
-    return not zone_text.endswith("-CENTER")
 
 def render_annotations(frame_data):
     """
@@ -106,62 +80,77 @@ def render_annotations(frame_data):
     # 1. Draw Bounding Boxes and Labels for Tracked Persons
     for person in frame_data.persons:
         xmin, ymin, xmax, ymax = person.bbox
-        zone_text = classify_camera_zone(person.bbox, w, h)
-        in_danger_area = is_danger_area(zone_text)
-        if in_danger_area:
-            danger_area_count += 1
+        
+        zone_id = person.metadata.get("zone_id", "safe")
         has_yellow_vest = person.metadata.get("has_yellow_vest")
-        if has_yellow_vest is True:
-            vest_text = "VEST: YES"
-        elif has_yellow_vest is False:
-            vest_text = "VEST: NO"
-        else:
-            vest_text = "VEST: ?"
-
-        area_text = "DANGER AREA: PPE REQUIRED" if in_danger_area else "CENTER AREA"
         
         is_safe = True
-        status_text = f"ID {person.person_id} | SAFE | {vest_text} | {zone_text} | {area_text}"
-        color = (0, 200, 0)  # Green for safe
-
-        if in_danger_area:
-            color = (0, 0, 255)
+        messages = []
+        color = (0, 200, 0) # Green
         
-        zone_violations = person.metadata.get("zone_violations") or person.compliance_violations
-
         if person.is_fallen:
-            color = (0, 0, 255)  # Red
-            status_text = f"ID {person.person_id} | FALL DETECTED | {vest_text} | {zone_text} | {area_text}"
+            messages.append("FALL DETECTED")
             is_safe = False
-        elif len(zone_violations) > 0:
-            color = (0, 140, 255)  # Orange
+            color = (0, 0, 255)
+            danger_area_count += 1
+        elif zone_id == "restricted":
+            messages.append("SOMEONE ENTERED THE RESTRICTED AREA")
+            is_safe = False
+            color = (0, 0, 255)
+            danger_area_count += 1
+        elif zone_id == "work_floor":
             viols = []
-            if "Helmet" in zone_violations:
+            if person.has_helmet is False:
                 viols.append("NO HELMET")
-            if "Glasses" in zone_violations:
+            if person.has_glasses is False:
                 viols.append("NO GLASSES")
-            status_text = f"ID {person.person_id} | UNSAFE: {', '.join(viols)} | {vest_text} | {zone_text} | {area_text}"
-            is_safe = False
-        elif in_danger_area:
-            status_text = f"ID {person.person_id} | WARNING: WEAR SAFETY GEAR | {vest_text} | {zone_text} | {area_text}"
-            is_safe = False
-
+            if has_yellow_vest is False:
+                viols.append("NO VEST")
+            
+            if viols:
+                messages.extend(viols)
+                is_safe = False
+                color = (0, 140, 255) # Orange
+                danger_area_count += 1
+        elif zone_id == "safe":
+            # can wear nothing
+            pass
+            
         if is_safe:
-            # Minimalist corner brackets
+            messages.append("SAFE")
+            
+        # Draw box
+        if is_safe:
             draw_corner_brackets(frame, xmin, ymin, xmax, ymax, color, thickness=2, length=15)
-            # Small ID pill
-            (tw, th), _ = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 2)
-            cv2.rectangle(overlay, (xmin, ymin - th - 8), (xmin + tw + 10, ymin), (0, 0, 0), -1)
-            post_blend_text.append((status_text, (xmin + 5, ymin - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1))
         else:
-            # Danger: Full thin box + translucent fill
             cv2.rectangle(overlay, (xmin, ymin), (xmax, ymax), color, -1)
             cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), color, 2)
             
-            # Danger ID pill
-            (tw, th), _ = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 2)
-            cv2.rectangle(frame, (xmin, ymin - th - 8), (xmin + tw + 10, ymin), color, -1)
-            post_blend_text.append((status_text, (xmin + 5, ymin - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1))
+        # Draw multiline minimalist text
+        y_offset = ymin - 8
+        # We'll draw them backwards so they stack upwards
+        for msg in reversed(messages):
+            # Use smaller font
+            font_scale = 0.35
+            thickness = 1
+            (tw, th), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+            
+            # draw pill
+            y_top = y_offset - th - 4
+            cv2.rectangle(frame if not is_safe else overlay, (xmin, y_top), (xmin + tw + 6, y_offset + 2), color if not is_safe else (0, 0, 0), -1)
+            
+            # queue text
+            text_color = (255, 255, 255)
+            post_blend_text.append((msg, (xmin + 3, y_offset - 2), cv2.FONT_HERSHEY_SIMPLEX, font_scale, text_color, thickness))
+            
+            y_offset -= (th + 8)
+
+        # Draw ID separately at the top
+        msg_id = f"ID: {person.person_id}"
+        (tw, th), _ = cv2.getTextSize(msg_id, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
+        y_top = y_offset - th - 4
+        cv2.rectangle(frame if not is_safe else overlay, (xmin, y_top), (xmin + tw + 6, y_offset + 2), (0,0,0), -1)
+        post_blend_text.append((msg_id, (xmin + 3, y_offset - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1))
             
     # Apply alpha blend for danger boxes and safe ID pills
     cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
@@ -170,7 +159,7 @@ def render_annotations(frame_data):
     hud_overlay = frame.copy()
 
     if danger_area_count > 0:
-        warning_text = f"DANGER AREA ALERT: {danger_area_count} WORKER(S) REQUIRE SAFETY GEAR"
+        warning_text = f"SAFETY ALERT: {danger_area_count} WORKER(S) IN DANGER"
         (dw, dh), _ = cv2.getTextSize(warning_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
         cv2.rectangle(hud_overlay, (10, 54), (min(w - 10, 10 + dw + 24), 54 + dh + 20), (0, 0, 255), -1)
         post_blend_text.append((warning_text, (22, 54 + dh + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2))

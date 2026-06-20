@@ -8,7 +8,7 @@
       "color_bgr": [100, 220, 100],
       "frame_rect_norm": [0.0, 0.0, 0.2, 1.0],
       "require_helmet": false,
-      "require_glasses": true,
+      "require_glasses": false,
       "alert_on_entry": false,
       "priority": 10
     },
