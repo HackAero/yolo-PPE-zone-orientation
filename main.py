@@ -6,6 +6,7 @@ import os
 import json
 from datetime import datetime
 from collections import deque
+import threading
 from src.engine import SafetyPipelineEngine
 from src.session_labels import worker_label
 from src.zone_map import draw_zones_overlay
@@ -78,6 +79,12 @@ class SupervisorReplayRecorder:
         if not frames:
             return
 
+        # Start a thread to save the video so we don't block the main loop
+        t = threading.Thread(target=self._save_video_task, args=(timestamp, event, frames))
+        t.daemon = True
+        t.start()
+
+    def _save_video_task(self, timestamp, event, frames):
         # Normalize replay frames so codecs receive consistent 8-bit BGR images.
         norm_frames = []
         base_h, base_w = frames[0].shape[:2]
@@ -110,7 +117,6 @@ class SupervisorReplayRecorder:
         event_slug = event["type"].lower().replace("/", "_").replace(" ", "_")
         base_name = f"event_{stamp}_{event_slug}"
         avi_path = os.path.join(self.output_dir, f"{base_name}.avi")
-        mp4_path = os.path.join(self.output_dir, f"{base_name}.mp4")
         meta_path = os.path.join(self.output_dir, f"{base_name}.json")
 
         # Primary export: MJPG AVI is broadly decodable on macOS and avoids green-frame artifacts.
@@ -127,26 +133,13 @@ class SupervisorReplayRecorder:
             avi_writer.release()
             replay_path = avi_path
         else:
-            replay_path = mp4_path
-
-        # Secondary export: keep mp4 as optional compatibility artifact.
-        mp4_writer = cv2.VideoWriter(
-            mp4_path,
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            fps,
-            (width, height),
-        )
-        if mp4_writer.isOpened():
-            for frame in norm_frames:
-                mp4_writer.write(frame)
-            mp4_writer.release()
+            replay_path = avi_path
 
         metadata = {
             "timestamp": timestamp,
             "event": event,
             "video_path": replay_path,
             "video_path_avi": avi_path,
-            "video_path_mp4": mp4_path,
             "frame_count": len(norm_frames),
             "fps": fps,
             "pre_seconds": self.pre_seconds,
@@ -160,30 +153,38 @@ class SupervisorReplayRecorder:
 
     def draw_overlay(self, frame, timestamp):
         w = frame.shape[1]
-        x_right = w - 8
-        y_pos = 32 # Positioned cleanly under the top row of pills
-        font_scale = 0.3
+        font_scale = 0.4
+        
+        # Center x calculation helper
+        def get_center_x(text, scale):
+            (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+            return (w - tw) // 2
 
         if timestamp <= self._saved_until_ts and self._saved_text:
             text = self._saved_text
             (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
-            cv2.rectangle(frame, (x_right - tw - 10, y_pos), (x_right, y_pos + th + 10), (0, 120, 0), -1)
-            cv2.putText(frame, text, (x_right - tw - 5, y_pos + th + 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
-            y_pos += th + 15
+            cx = get_center_x(text, font_scale)
+            cv2.rectangle(frame, (cx - 10, 10), (cx + tw + 10, 10 + th + 10), (0, 120, 0), -1)
+            cv2.putText(frame, text, (cx, 10 + th + 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
 
         if timestamp <= self._popup_until_ts and self._popup_lines:
-            line_height = 14
-            pill_h = 10 + line_height * len(self._popup_lines)
+            y_pos = 40 if (timestamp <= self._saved_until_ts and self._saved_text) else 10
+            line_height = 20
             
+            # Find max width for the pill
             max_w = 0
             for line in self._popup_lines:
                 (tw, _), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
                 max_w = max(max_w, tw)
                 
-            cv2.rectangle(frame, (x_right - max_w - 10, y_pos), (x_right, y_pos + pill_h), (0, 0, 180), -1)
+            pill_h = 10 + line_height * len(self._popup_lines)
+            cx_rect = (w - max_w) // 2
+            
+            cv2.rectangle(frame, (cx_rect - 15, y_pos), (cx_rect + max_w + 15, y_pos + pill_h), (0, 0, 180), -1)
             
             for i, line in enumerate(self._popup_lines):
-                cv2.putText(frame, line, (x_right - max_w - 5, y_pos + 12 + i * line_height), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+                cx_text = get_center_x(line, font_scale)
+                cv2.putText(frame, line, (cx_text, y_pos + 15 + i * line_height), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
 
 
 def build_critical_event(frame_data):
@@ -296,13 +297,31 @@ def render_annotations(frame_data):
         cv2.putText(
             frame,
             worker_label(person.person_id),
-            (xmin, max(10, ymin - 4)),
+            (xmin, max(10, ymin - 16)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.25,
             color,
             1,
             cv2.LINE_AA,
         )
+        
+        # --- Minimalist PPE Status (H G V) ---
+        px = xmin
+        py = max(10, ymin - 4)
+        
+        # Helmet
+        c_h = (0, 200, 0) if person.has_helmet else (0, 0, 255) if person.has_helmet is False else (150, 150, 150)
+        cv2.putText(frame, "H", (px, py), cv2.FONT_HERSHEY_SIMPLEX, 0.25, c_h, 1, cv2.LINE_AA)
+        px += 10
+        
+        # Glasses
+        c_g = (0, 200, 0) if person.has_glasses else (0, 0, 255) if person.has_glasses is False else (150, 150, 150)
+        cv2.putText(frame, "G", (px, py), cv2.FONT_HERSHEY_SIMPLEX, 0.25, c_g, 1, cv2.LINE_AA)
+        px += 10
+        
+        # Vest
+        c_v = (0, 200, 0) if has_yellow_vest else (0, 0, 255) if has_yellow_vest is False else (150, 150, 150)
+        cv2.putText(frame, "V", (px, py), cv2.FONT_HERSHEY_SIMPLEX, 0.25, c_v, 1, cv2.LINE_AA)
 
     cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
 
