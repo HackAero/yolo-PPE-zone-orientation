@@ -1,4 +1,5 @@
 import cv2
+import os
 import sys
 
 sys.modules.setdefault("sounddevice", None)
@@ -19,6 +20,9 @@ class PrivacyAnonymizer:
         """
         self.use_mock = use_mock
         self.face_cache = {}
+        self._garfield_bgra = None
+        if os.path.exists(config.GARFIELD_IMAGE_PATH):
+            self._garfield_bgra = cv2.imread(config.GARFIELD_IMAGE_PATH, cv2.IMREAD_UNCHANGED)
 
         self.tattoo_detector = None
         if config.BLUR_TATOOS and not use_mock:
@@ -45,6 +49,61 @@ class PrivacyAnonymizer:
 
         blurred_roi = cv2.GaussianBlur(roi, (kw, kh), 0)
         frame[ymin:ymax, xmin:xmax] = blurred_roi
+
+    def _garfield_region(self, frame: np.ndarray, xmin: int, ymin: int, xmax: int, ymax: int):
+        h, w = frame.shape[:2]
+        xmin = max(0, min(xmin, w - 1))
+        ymin = max(0, min(ymin, h - 1))
+        xmax = max(0, min(xmax, w - 1))
+        ymax = max(0, min(ymax, h - 1))
+
+        if xmax <= xmin or ymax <= ymin:
+            return
+
+        # Blur first so any sticker gaps still hide the face.
+        self._blur_region(frame, xmin, ymin, xmax, ymax)
+
+        if self._garfield_bgra is None:
+            return
+
+        scale = float(config.GARFIELD_SCALE)
+        cx = (xmin + xmax) // 2
+        cy = (ymin + ymax) // 2
+        rw = max(1, int((xmax - xmin) * scale))
+        rh = max(1, int((ymax - ymin) * scale))
+        sticker = cv2.resize(self._garfield_bgra, (rw, rh), interpolation=cv2.INTER_AREA)
+
+        gxmin = cx - rw // 2
+        gymin = cy - rh // 2
+        gxmax = gxmin + rw
+        gymax = gymin + rh
+
+        dx1 = max(0, gxmin)
+        dy1 = max(0, gymin)
+        dx2 = min(w, gxmax)
+        dy2 = min(h, gymax)
+        if dx2 <= dx1 or dy2 <= dy1:
+            return
+
+        sx1 = dx1 - gxmin
+        sy1 = dy1 - gymin
+        sticker_crop = sticker[sy1 : sy1 + (dy2 - dy1), sx1 : sx1 + (dx2 - dx1)]
+        roi = frame[dy1:dy2, dx1:dx2]
+
+        if sticker_crop.ndim == 3 and sticker_crop.shape[2] == 4:
+            alpha = sticker_crop[:, :, 3:4].astype(np.float32) / 255.0
+            rgb = sticker_crop[:, :, :3].astype(np.float32)
+            frame[dy1:dy2, dx1:dx2] = (
+                alpha * rgb + (1.0 - alpha) * roi.astype(np.float32)
+            ).astype(np.uint8)
+        else:
+            frame[dy1:dy2, dx1:dx2] = sticker_crop[:, :, :3]
+
+    def _censor_region(self, frame: np.ndarray, xmin: int, ymin: int, xmax: int, ymax: int):
+        if config.PRIVACY_CENSORSHIP_MODE == "garfield":
+            self._garfield_region(frame, xmin, ymin, xmax, ymax)
+        else:
+            self._blur_region(frame, xmin, ymin, xmax, ymax)
 
     def _blur_masked_region(self, frame, bbox, mask):
         """Blur only mask-selected pixels inside a full-frame bounding box."""
@@ -180,7 +239,7 @@ class PrivacyAnonymizer:
                 side_pad = int(face_w * config.PRIVACY_FACE_EXPAND_SIDE)
                 top_pad = int(face_h * config.PRIVACY_FACE_EXPAND_TOP)
                 bottom_pad = int(face_h * config.PRIVACY_FACE_EXPAND_BOTTOM)
-                self._blur_region(
+                self._censor_region(
                     frame,
                     fxmin - side_pad,
                     fymin - top_pad,

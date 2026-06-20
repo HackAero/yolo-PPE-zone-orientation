@@ -397,7 +397,7 @@ def main():
 
     print("\n" + "=" * 50)
     print("MTU Pipeline Engine Active.")
-    print("Press 'q' to quit.")
+    print("Press 'g' to toggle Garfield face censorship, 'q' to quit.")
     print("=" * 50 + "\n")
 
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -432,6 +432,11 @@ def main():
             cv2.imshow(window_name, display_frame)
 
             key = cv2.waitKey(1) & 0xFF
+            if key == ord("g"):
+                config.PRIVACY_CENSORSHIP_MODE = (
+                    "garfield" if config.PRIVACY_CENSORSHIP_MODE == "blur" else "blur"
+                )
+                print(f"[Privacy] Face censorship: {config.PRIVACY_CENSORSHIP_MODE}")
             if key == ord("q"):
                 print("\nShutdown command received. Closing stream.")
                 break

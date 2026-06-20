@@ -68,6 +68,8 @@ PERSON_CONF_THRESHOLD = 0.45
 PPE_CONF_THRESHOLD = 0.2
 
 # --- Privacy Settings (Person 3) ---
+PRIVACY_CENSORSHIP_MODE = "blur"    # "blur" or "garfield" (toggle in UI / press g in main.py)
+GARFIELD_SCALE = 1.45             # Sticker size vs face box (blur still runs underneath)
 PRIVACY_BLUR_KERNEL_SIZE = (57, 57)  # Higher values = stronger blur
 PRIVACY_FACE_EXPAND_TOP = 0.35      # Include bangs and the top of the head
 PRIVACY_FACE_EXPAND_SIDE = 0.12     # Include hair beside both sides of the face
@@ -104,6 +106,7 @@ REID_COSINE_SIMILARITY_THRESHOLD = 0.72  # Balanced threshold: strict enough to 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 DATA_DIR = os.path.join(BASE_DIR, "data")
+GARFIELD_IMAGE_PATH = os.path.join(DATA_DIR, "garfield.png")
 
 # --- Zone map (B-lite) ---
 ZONES_ENABLED = True

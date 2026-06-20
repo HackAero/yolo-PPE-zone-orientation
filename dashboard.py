@@ -35,6 +35,11 @@ st.sidebar.divider()
 st.sidebar.subheader("Safety Rules Thresholds")
 conf_threshold = st.sidebar.slider("Person Detection Conf", 0.1, 1.0, 0.4, 0.05)
 blur_intensity = st.sidebar.slider("Privacy Blur Intensity", 15, 101, 51, 2)  # Odd number
+censorship_mode = st.sidebar.radio(
+    "Face censorship",
+    ("Blur", "Garfield"),
+    horizontal=True,
+)
 is_smoke_simulated = False
 
 if run_mode == "Simulated Mock Engine":
@@ -113,6 +118,9 @@ if run_pipeline:
             import src.config as config
             config.PRIVACY_BLUR_KERNEL_SIZE = (kernel_size, kernel_size)
             config.PERSON_CONF_THRESHOLD = conf_threshold
+            config.PRIVACY_CENSORSHIP_MODE = (
+                "garfield" if censorship_mode == "Garfield" else "blur"
+            )
             
             # Redact and annotate the processed frame
             render_annotations(frame_data)
