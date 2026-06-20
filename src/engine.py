@@ -14,16 +14,31 @@ from src.pipeline_types import FrameData
 from src.ppe_inference import SharedPPEDetector
 from src.privacy import PrivacyAnonymizer
 from src.tracker import PersonTracker
+from src.zone_map import ZoneMonitor
 
 
 class SafetyPipelineEngine:
-    def __init__(self, use_mock: bool = False, video_source: Optional[str] = None):
+    def __init__(
+        self,
+        use_mock: bool = False,
+        video_source: Optional[str] = None,
+        zones_path: Optional[str] = None,
+        camera_profile: Optional[str] = None,
+    ):
         self.use_mock = use_mock
         self.video_source = video_source
         self.running = False
 
+        resolved_zones = config.resolve_zones_path(
+            profile=camera_profile,
+            explicit_path=zones_path,
+        )
+
         mode = "FAST" if config.FAST_MODE else "SMOOTH" if config.SMOOTH_MODE else "STANDARD"
-        print(f"[PipelineEngine] Initializing pipeline. Mock mode: {use_mock}, mode: {mode}")
+        print(
+            f"[PipelineEngine] Initializing pipeline. Mock mode: {use_mock}, mode: {mode}, "
+            f"zones: {resolved_zones}"
+        )
 
         self.face_detector = SharedFaceDetector(use_mock=use_mock)
         self.tracker_stage = PersonTracker(use_mock=use_mock)
@@ -31,6 +46,11 @@ class SafetyPipelineEngine:
         self.compliance_stage = PPEComplianceChecker(use_mock=use_mock)
         self.environment_stage = EnvironmentBehaviorMonitor(use_mock=use_mock)
         self.privacy_stage = PrivacyAnonymizer(use_mock=use_mock)
+        self.zone_monitor = ZoneMonitor(
+            zones_path=resolved_zones,
+            use_mock=use_mock,
+            camera_profile=camera_profile or config.ZONES_PROFILE,
+        )
         self.dispatcher = RobotDispatcher()
         self._frame_grabber: Optional[LatestFrameGrabber] = None
 
@@ -116,12 +136,6 @@ class SafetyPipelineEngine:
             t0 = time.time()
             self.face_detector.populate_frame_cache(frame_data)
             stage_ms["face_detect"] = int((time.time() - t0) * 1000)
-            frame_data.extra_metadata["ppe_debug"] = {
-                "helmet_boxes": [],
-                "glasses_boxes": [],
-                "raw_detections": [],
-                "model_available": False,
-            }
         else:
             stage_ms["ppe_yolo"] = 0
             stage_ms["ppe_assign"] = 0
@@ -132,16 +146,21 @@ class SafetyPipelineEngine:
         stage_ms["compliance_heuristics"] = int((time.time() - t0) * 1000)
 
         t0 = time.time()
+        frame_data = self.zone_monitor.process(frame_data, dispatcher=self.dispatcher)
+        stage_ms["zones"] = int((time.time() - t0) * 1000)
+
+        t0 = time.time()
         frame_data = self.environment_stage.process(frame_data)
         stage_ms["environment"] = int((time.time() - t0) * 1000)
 
         for person in frame_data.persons:
             if person.is_fallen:
-                self.dispatcher.send(alert_type="FALL_DETECTED", person_id=person.person_id)
-            if "Helmet" in person.compliance_violations:
-                self.dispatcher.send(alert_type="NO_HELMET", person_id=person.person_id)
-            if "Glasses" in person.compliance_violations:
-                self.dispatcher.send(alert_type="NO_GLASSES", person_id=person.person_id)
+                zone_id = person.metadata.get("zone_id", config.ZONE_ID)
+                self.dispatcher.send(
+                    alert_type="FALL_DETECTED",
+                    person_id=person.person_id,
+                    zone_id=zone_id if zone_id != "unknown" else None,
+                )
 
         self._ensure_processed_frame(frame_data)
         if not self.use_mock and frame_data.processed_frame is frame_data.raw_frame:

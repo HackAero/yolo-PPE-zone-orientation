@@ -618,7 +618,8 @@
     let payload;
     try { payload = JSON.parse(message.toString()); } catch(e) { return; }
 
-    const { team_id='?', zone_id='?', alert_type='UNKNOWN', person_id='?', timestamp } = payload;
+    const { team_id='?', zone_id='?', alert_type='UNKNOWN', person_id='?', person_label, timestamp } = payload;
+    const personDisplay = person_label || ('#' + person_id);
     const time = timestamp ? new Date(timestamp * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
 
     totalDispatches++;
@@ -626,13 +627,16 @@
     statZone.textContent  = zone_id;
     statTeam.textContent  = team_id;
 
-    const severity = alert_type === 'FALL_DETECTED' ? 'fall' : 'ppe';
-    triggerHeroAlert(team_id, zone_id, person_id, alert_type, severity);
-    appendLogRow(time, team_id, zone_id, alert_type, person_id);
+    let severity = 'ppe';
+    if (alert_type === 'FALL_DETECTED') severity = 'fall';
+    else if (alert_type === 'RESTRICTED_ENTRY') severity = 'restricted';
+
+    triggerHeroAlert(team_id, zone_id, personDisplay, alert_type, severity);
+    appendLogRow(time, team_id, zone_id, alert_type, personDisplay);
   });
 
   function triggerHeroAlert(team, zone, person, alertType, severity) {
-    // Don't let a PPE warning overwrite an active fall alert
+    // Don't let a PPE warning overwrite an active fall or restricted alert
     if (heroCard.classList.contains('alert') && severity === 'ppe') return;
 
     clearTimeout(alertTimer);
@@ -643,6 +647,11 @@
       heroIcon.textContent = '🚨';
       heroStatusLabel.textContent = 'FALL DETECTED!';
       heroSubtext.textContent = 'Robot dispatching to Zone ' + zone;
+    } else if (severity === 'restricted') {
+      heroCard.classList.add('alert');
+      heroIcon.textContent = '⛔';
+      heroStatusLabel.textContent = 'RESTRICTED ENTRY';
+      heroSubtext.textContent = 'Unauthorized entry — Zone ' + zone;
     } else {
       heroCard.classList.add('alert-ppe');
       if (alertType === 'NO_HELMET') {
@@ -657,7 +666,7 @@
 
     detailTeam.textContent   = team;
     detailZone.textContent   = zone;
-    detailPerson.textContent = '#' + person;
+    detailPerson.textContent = String(person).startsWith('#') ? person : String(person);
 
     countdownFill.style.transition = 'none';
     countdownFill.style.width = '100%';
@@ -684,8 +693,8 @@
       <td>${esc(time)}</td>
       <td><strong>${esc(String(team))}</strong></td>
       <td>${esc(String(zone))}</td>
-      <td><span class="badge ${alertType === 'FALL_DETECTED' ? 'badge-fall' : 'badge-ppe'}">${esc(String(alertType))}</span></td>
-      <td>#${esc(String(person))}</td>
+      <td><span class="badge ${alertType === 'FALL_DETECTED' ? 'badge-fall' : alertType === 'RESTRICTED_ENTRY' ? 'badge-fall' : 'badge-ppe'}">${esc(String(alertType))}</span></td>
+      <td>${esc(String(person))}</td>
     `;
     logTableBody.insertBefore(tr, logTableBody.firstChild);
     while (logTableBody.rows.length > 50) logTableBody.removeChild(logTableBody.lastChild);

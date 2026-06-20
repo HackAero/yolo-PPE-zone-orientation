@@ -1,0 +1,36 @@
+{
+  "profile": "monitor",
+  "description": "Full camera frame: safe (left 20%), work (center 55%), restricted (right 25%).",
+  "zones": [
+    {
+      "id": "safe",
+      "label": "Safe zone",
+      "color_bgr": [100, 220, 100],
+      "frame_rect_norm": [0.0, 0.0, 0.2, 1.0],
+      "require_helmet": false,
+      "require_glasses": true,
+      "alert_on_entry": false,
+      "priority": 10
+    },
+    {
+      "id": "work_floor",
+      "label": "Work floor",
+      "color_bgr": [80, 180, 220],
+      "frame_rect_norm": [0.2, 0.0, 0.75, 1.0],
+      "require_helmet": true,
+      "require_glasses": true,
+      "alert_on_entry": false,
+      "priority": 20
+    },
+    {
+      "id": "restricted",
+      "label": "Restricted",
+      "color_bgr": [0, 0, 200],
+      "frame_rect_norm": [0.75, 0.0, 1.0, 1.0],
+      "require_helmet": true,
+      "require_glasses": true,
+      "alert_on_entry": true,
+      "priority": 100
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import time
 import sys
 from src.engine import SafetyPipelineEngine
 from src.session_labels import worker_label
+from src.zone_map import draw_zones_overlay
 import src.config as config
 
 def draw_corner_brackets(frame, xmin, ymin, xmax, ymax, color, thickness=2, length=15):
@@ -26,6 +27,8 @@ def render_annotations(frame_data):
     """
     frame = frame_data.processed_frame
     h, w = frame.shape[:2]
+
+    draw_zones_overlay(frame, frame_data)
     
     # Optional overlay for translucent shapes
     overlay = frame.copy()
@@ -84,19 +87,24 @@ def render_annotations(frame_data):
             vest_text = "VEST: ?"
         
         is_safe = True
-        status_text = f"ID {person.person_id} | SAFE | {vest_text}"
+        label = worker_label(person.person_id)
+        zone_label = person.metadata.get("zone_label")
+        zone_suffix = f" | {zone_label}" if zone_label else ""
+        status_text = f"{label}{zone_suffix} | SAFE"
         color = (0, 200, 0)  # Green for safe
         
+        zone_violations = person.metadata.get("zone_violations") or person.compliance_violations
+
         if person.is_fallen:
             color = (0, 0, 255)  # Red
-            status_text = f"ID {person.person_id} | FALL DETECTED | {vest_text}"
+            status_text = f"{label}{zone_suffix} | FALL DETECTED"
             is_safe = False
-        elif len(person.compliance_violations) > 0:
+        elif len(zone_violations) > 0:
             color = (0, 140, 255)  # Orange
             viols = []
-            if "Helmet" in person.compliance_violations: viols.append("NO HELMET")
-            if "Glasses" in person.compliance_violations: viols.append("NO GLASSES")
-            status_text = f"ID {person.person_id} | UNSAFE: {', '.join(viols)} | {vest_text}"
+            if "Helmet" in zone_violations: viols.append("NO HELMET")
+            if "Glasses" in zone_violations: viols.append("NO GLASSES")
+            status_text = f"{label}{zone_suffix} | UNSAFE: {', '.join(viols)}"
             is_safe = False
 
         if is_safe:
@@ -163,6 +171,18 @@ def main():
     parser = argparse.ArgumentParser(description="Hackatum safety monitoring computer vision pipeline.")
     parser.add_argument("--mock", action="store_true", help="Run with simulated warehouse video and inputs")
     parser.add_argument("--source", type=str, default=None, help="Video source (e.g. '0' for webcam, or path to file)")
+    parser.add_argument(
+        "--camera-profile",
+        choices=["monitor", "rover"],
+        default="monitor",
+        help="Zone layout for fixed monitor cam vs rover-mounted cam (default: monitor)",
+    )
+    parser.add_argument(
+        "--zones-file",
+        type=str,
+        default=None,
+        help="Custom zones JSON path (overrides --camera-profile)",
+    )
     args = parser.parse_args()
     
     # Initialize Engine
@@ -170,7 +190,12 @@ def main():
     if source is not None and source.isdigit():
         source = int(source)
         
-    engine = SafetyPipelineEngine(use_mock=args.mock, video_source=source)
+    engine = SafetyPipelineEngine(
+        use_mock=args.mock,
+        video_source=source,
+        camera_profile=args.camera_profile,
+        zones_path=args.zones_file,
+    )
     stream = engine.stream_frames()
     
     print("\n" + "="*50)

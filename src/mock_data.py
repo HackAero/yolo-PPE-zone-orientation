@@ -143,16 +143,25 @@ class MockPipelineGenerator:
         for j in range(0, self.width, 40):
             cv2.line(frame, (j, 0), (j, self.height), (40, 35, 35), 1)
 
-        # Draw a simulated industrial machine area
+        # Zone stripes (match zones/monitor.json floor plan)
+        safe_x = int(self.width * 0.2)
+        work_x = int(self.width * 0.75)
+        cv2.line(frame, (safe_x, 0), (safe_x, self.height), (100, 220, 100), 1)
+        cv2.line(frame, (work_x, 0), (work_x, self.height), (0, 0, 200), 1)
+        cv2.putText(frame, "SAFE", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (100, 255, 100), 1)
+        cv2.putText(frame, "WORK", (safe_x + 12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 200, 80), 1)
+        cv2.putText(frame, "RESTRICTED", (work_x + 12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
+
+        # Draw simulated industrial machine area (center work zone)
         cv2.rectangle(frame, (50, 50), (180, 200), (60, 60, 50), -1)
         cv2.putText(frame, "Curing Oven", (60, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 255, 100), 1)
         
-        cv2.rectangle(frame, (450, 250), (600, 420), (50, 60, 60), -1)
-        cv2.putText(frame, "CNC Mill", (470, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 255, 100), 1)
+        cv2.rectangle(frame, (280, 250), (420, 420), (50, 60, 60), -1)
+        cv2.putText(frame, "CNC Mill", (300, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 255, 100), 1)
 
-        # Draw simulated safety hazard zone
-        cv2.rectangle(frame, (250, 150), (390, 280), (0, 0, 100), 2)
-        cv2.putText(frame, "RESTRICTED", (270, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        # Restricted equipment (right column)
+        cv2.rectangle(frame, (work_x + 20, 150), (self.width - 20, 320), (0, 0, 100), 2)
+        cv2.putText(frame, "ELECTROPLATING", (work_x + 30, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1)
 
         # Draw workers
         for worker in self.active_sims:

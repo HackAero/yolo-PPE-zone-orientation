@@ -16,7 +16,10 @@ the robot_dashboard.html file on any other laptop will receive the signal live.
 import json
 import time
 import threading
+from typing import Optional
+
 import src.config as config
+from src.session_labels import worker_label
 
 
 class RobotDispatcher:
@@ -49,13 +52,19 @@ class RobotDispatcher:
     # Public API
     # ------------------------------------------------------------------
 
-    def send(self, alert_type: str = "FALL_DETECTED", person_id: int = -1) -> bool:
+    def send(
+        self,
+        alert_type: str = "FALL_DETECTED",
+        person_id: int = -1,
+        zone_id: Optional[str] = None,
+    ) -> bool:
         """
         Send a dispatch signal for the given person, if not in cooldown.
 
         Args:
-            alert_type: Type of alert (e.g. "FALL_DETECTED").
+            alert_type: Type of alert (e.g. "FALL_DETECTED", "RESTRICTED_ENTRY").
             person_id:  The tracked person's ID from the pipeline.
+            zone_id:    Camera-space zone id; falls back to config.ZONE_ID.
 
         Returns:
             True if the signal was sent, False if skipped (cooldown).
@@ -72,9 +81,10 @@ class RobotDispatcher:
 
         payload = {
             "team_id": config.TEAM_ID,
-            "zone_id": config.ZONE_ID,
+            "zone_id": zone_id or config.ZONE_ID,
             "alert_type": alert_type,
             "person_id": person_id,
+            "person_label": worker_label(person_id) if person_id >= 0 else None,
             "timestamp": time.time(),
         }
 
@@ -130,7 +140,7 @@ class RobotDispatcher:
         )
         if result.rc == 0:
             print(f"[Dispatcher] [OK] MQTT signal sent -> topic='{config.DISPATCH_MQTT_TOPIC}' | "
-                  f"person_id={payload['person_id']}")
+                  f"zone={payload['zone_id']} person={payload.get('person_label', payload['person_id'])}")
         else:
             print(f"[Dispatcher] [WARNING] MQTT publish returned rc={result.rc}")
 

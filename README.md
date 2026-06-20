@@ -12,6 +12,7 @@ A real-time, multi-stage Computer Vision pipeline built to enhance warehouse and
 - **Mock Simulation Engine**: Generates synthetic warehouse scenes and workers—perfect for testing without a camera or ML models.
 - **Interactive Dashboard**: Real-time monitoring UI built with **Streamlit**.
 - **Live Video Support**: Works with USB webcams, IP cameras, or local video files.
+- **Zone-aware compliance (B-lite)**: Image-space zones (`zones.json`) with per-zone PPE rules, restricted-area entry alerts, and real `zone_id` on MQTT dispatch.
 
 ## System Architecture
 
@@ -19,8 +20,9 @@ The pipeline processes every frame through four sequential stages:
 
 1. **Tracker Stage** (`tracker.py`): Detects people and assigns persistent IDs.
 2. **Compliance Stage** (`compliance.py`): Checks helmets and glasses.
-3. **Environment Stage** (`environment.py`): Checks image quality, smoke/fire, and detects falls.
-4. **Privacy Stage** (`privacy.py`): Anonymizes faces/tattoos on the processed frame.
+3. **Zone Stage** (`zone_map.py`): Assigns workers to camera-space zones and applies zone-specific rules.
+4. **Environment Stage** (`environment.py`): Checks image quality, smoke/fire, and detects falls.
+5. **Privacy Stage** (`privacy.py`): Anonymizes faces/tattoos on the processed frame.
 
 The pipeline runs up to **4 independent YOLO models** per frame:
 - `yolov8s.pt` → People
@@ -52,6 +54,17 @@ python main.py
 Simulation (no camera or models needed):
 ```bash
 python main.py --mock
+```
+
+Zones use the **full camera frame** automatically (no calibration step). Side-mounted camera: left = safe, center = work, right = restricted. Zone is chosen from the person's bbox center.
+
+```bash
+python main.py --source 0
+```
+
+Custom zone file:
+```bash
+python main.py --zones-file zones/my_calibrated.json
 ```
 
 Streamlit dashboard:

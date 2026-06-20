@@ -1,10 +1,9 @@
 import os
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import src.config as config
 from src.ppe import glasses_inside_person, helmet_inside_person
-
 
 Box = Tuple[int, int, int, int, float]
 LabeledBox = Tuple[str, int, int, int, int, float]
@@ -26,6 +25,8 @@ class SharedPPEDetector:
     def __init__(self, use_mock: bool = False):
         self.use_mock = use_mock
         self.model = None
+        self._frame_counter = 0
+        self._cached_result: Optional[PPEResult] = None
 
         if not use_mock and os.path.exists(config.PPE_MODEL_PATH):
             from ultralytics import YOLO
@@ -39,18 +40,18 @@ class SharedPPEDetector:
         elif not use_mock:
             print("[PPE] Custom model not found. Heuristics-only fallback.")
 
-    def _run_model(self, frame):
-        if self.model is None or frame.size == 0:
+    def _run_model(self, frame_or_crops):
+        if self.model is None:
             return None
 
-        imgsz = max(config.YOLO_IMGSZ, 640)
+        imgsz = getattr(config, "PPE_IMGSZ", config.YOLO_IMGSZ)
         return self.model(
-            frame,
+            frame_or_crops,
             conf=min(config.PPE_CONF_THRESHOLD, 0.12),
             imgsz=imgsz,
             device=config.YOLO_DEVICE,
             verbose=False,
-        )[0]
+        )
 
     def _collect_boxes(self, results, x_offset=0, y_offset=0):
         helmet_boxes: List[Box] = []
@@ -96,33 +97,58 @@ class SharedPPEDetector:
 
         return frame[y1:y2, x1:x2], (x1, y1)
 
+    @staticmethod
+    def _needs_crop_pass(person, frame_shape: Tuple[int, ...]) -> bool:
+        """Crop refine only when full-frame pass likely missed small PPE."""
+        frame_h = frame_shape[0]
+        person_h = person.bbox[3] - person.bbox[1]
+        if person_h < frame_h * 0.28:
+            return True
+        return not person.has_helmet or not person.has_glasses
+
+    def _merge_boxes(
+        self,
+        helmet_boxes: List[Box],
+        glasses_boxes: List[Box],
+        raw_detections: List[LabeledBox],
+        new_helmets: List[Box],
+        new_glasses: List[Box],
+        new_raw: List[LabeledBox],
+    ) -> None:
+        helmet_boxes.extend(new_helmets)
+        glasses_boxes.extend(new_glasses)
+        raw_detections.extend(new_raw)
+
     def detect_all(self, frame, persons=None) -> PPEResult:
         if self.model is None or frame.size == 0:
             return PPEResult(model_available=False)
+
+        self._frame_counter += 1
+        run_inference = (
+            self._cached_result is None
+            or (self._frame_counter - 1) % config.PPE_INFERENCE_INTERVAL == 0
+        )
+
+        if not run_inference and self._cached_result is not None:
+            result = PPEResult(
+                helmet_boxes=list(self._cached_result.helmet_boxes),
+                glasses_boxes=list(self._cached_result.glasses_boxes),
+                raw_detections=list(self._cached_result.raw_detections),
+                model_available=True,
+            )
+            if persons is not None:
+                assign_ppe_to_persons(persons, result)
+            return result
 
         helmet_boxes: List[Box] = []
         glasses_boxes: List[Box] = []
         raw_detections: List[LabeledBox] = []
 
-        # Run once on the full frame, then again on each tracked person's head/upper body crop.
-        # The crop pass helps with small PPE items like helmets and safety glasses.
-        full_frame_results = self._run_model(frame)
-        full_helmet_boxes, full_glasses_boxes, full_raw_detections = self._collect_boxes(full_frame_results)
-        helmet_boxes.extend(full_helmet_boxes)
-        glasses_boxes.extend(full_glasses_boxes)
-        raw_detections.extend(full_raw_detections)
-
-        if persons:
-            for person in persons:
-                crop, (x_offset, y_offset) = self._person_head_crop(frame, person.bbox)
-                if crop is None or crop.size == 0:
-                    continue
-
-                crop_results = self._run_model(crop)
-                crop_helmets, crop_glasses, crop_raw_detections = self._collect_boxes(crop_results, x_offset, y_offset)
-                helmet_boxes.extend(crop_helmets)
-                glasses_boxes.extend(crop_glasses)
-                raw_detections.extend(crop_raw_detections)
+        full_outputs = self._run_model(frame)
+        if full_outputs is not None:
+            full_result = full_outputs[0] if isinstance(full_outputs, list) else full_outputs
+            h, g, r = self._collect_boxes(full_result)
+            self._merge_boxes(helmet_boxes, glasses_boxes, raw_detections, h, g, r)
 
         result = PPEResult(
             helmet_boxes=helmet_boxes,
@@ -132,6 +158,38 @@ class SharedPPEDetector:
         )
         if persons is not None:
             assign_ppe_to_persons(persons, result)
+
+        if persons and getattr(config, "PPE_CROP_PASS", False):
+            crop_targets = [
+                p for p in persons if self._needs_crop_pass(p, frame.shape)
+            ][: getattr(config, "PPE_CROP_MAX_PERSONS", 2)]
+
+            crops = []
+            offsets = []
+            for person in crop_targets:
+                crop, offset = self._person_head_crop(frame, person.bbox)
+                if crop is not None and crop.size > 0:
+                    crops.append(crop)
+                    offsets.append(offset)
+
+            if crops:
+                crop_outputs = self._run_model(crops)
+                if crop_outputs is not None:
+                    for crop_result, (x_off, y_off) in zip(crop_outputs, offsets):
+                        h, g, r = self._collect_boxes(crop_result, x_off, y_off)
+                        self._merge_boxes(helmet_boxes, glasses_boxes, raw_detections, h, g, r)
+
+                    result.helmet_boxes = helmet_boxes
+                    result.glasses_boxes = glasses_boxes
+                    result.raw_detections = raw_detections
+                    assign_ppe_to_persons(persons, result)
+
+        self._cached_result = PPEResult(
+            helmet_boxes=list(result.helmet_boxes),
+            glasses_boxes=list(result.glasses_boxes),
+            raw_detections=list(result.raw_detections),
+            model_available=True,
+        )
         return result
 
 
