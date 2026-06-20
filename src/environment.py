@@ -387,6 +387,7 @@ class EnvironmentBehaviorMonitor:
                         f"CRITICAL: {worker_label(person.person_id)} is detected lying on the floor!"
                     ),
                     "person_id": person.person_id,
+                    "zone_id": person.metadata.get("zone_id", "unknown"),
                     "timestamp": now,
                     "debounced": is_debounced,
                 }

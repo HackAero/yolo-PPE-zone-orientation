@@ -261,6 +261,9 @@ class PPEComplianceChecker:
             self.use_mock
             or frame_data.frame_index % config.COMPLIANCE_HEURISTIC_INTERVAL == 0
         )
+        ppe_model_available = bool(
+            (frame_data.extra_metadata.get("ppe_debug") or {}).get("model_available", False)
+        )
 
         for person in frame_data.persons:
             if self.use_mock:
@@ -296,7 +299,11 @@ class PPEComplianceChecker:
                 elif person.has_helmet is False:
                     person.metadata["cached_helmet"] = False
 
-                if not person.has_glasses:
+                allow_glasses_heuristic = (
+                    bool(getattr(config, "PPE_USE_GLASSES_HEURISTIC", False))
+                    and not ppe_model_available
+                )
+                if not person.has_glasses and allow_glasses_heuristic:
                     if run_heuristics:
                         person.has_glasses = self._detect_glasses_heuristic(
                             frame_data, person
@@ -309,7 +316,7 @@ class PPEComplianceChecker:
                 # Always persist positives so PPE model can't reset a confirmed detection
                 if person.has_helmet:
                     person.metadata["cached_helmet"] = True
-                if person.has_glasses:
+                if person.has_glasses and allow_glasses_heuristic:
                     person.metadata["cached_glasses"] = True
 
             violations = []

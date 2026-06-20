@@ -218,11 +218,30 @@ class ZoneMonitor:
                     
             person.metadata["zone_id"] = zone.id
             person.metadata["zone_label"] = zone.label
+            person.metadata["zone_forbidden"] = bool(zone.alert_on_entry)
+
+            required_violations = []
+            if zone.require_helmet and person.has_helmet is not True:
+                required_violations.append("Helmet")
+            if zone.require_glasses and person.has_glasses is not True:
+                required_violations.append("Glasses")
+
+            optional_missing = []
+            if zone.id in ("work_floor", "restricted") and person.metadata.get("has_yellow_vest") is False:
+                optional_missing.append("Vest")
+
+            person.metadata["zone_violations"] = required_violations
+            person.metadata["zone_optional_missing"] = optional_missing
+            person.metadata["zone_required_ok"] = len(required_violations) == 0
 
             if zone.alert_on_entry:
-                if not self._restricted_inside.get(person.person_id, False):
+                was_inside = self._restricted_inside.get(person.person_id, False)
+                if not was_inside:
                     if not self._debounced(person.person_id, f"entry_{zone.id}"):
-                        msg = f"{worker_label(person.person_id)} entered restricted area '{zone.label}'"
+                        msg = (
+                            f"{worker_label(person.person_id)} entered restricted area "
+                            f"'{zone.label}'"
+                        )
                         frame_data.alerts.append({
                             "type": "RESTRICTED_ENTRY", "severity": "Critical", "message": msg,
                             "person_id": person.person_id, "zone_id": zone.id, "timestamp": frame_data.timestamp
@@ -232,17 +251,7 @@ class ZoneMonitor:
             else:
                 self._restricted_inside.pop(person.person_id, None)
 
-            zone_violations = []
-            if zone.require_helmet and person.has_helmet is not True:
-                zone_violations.append("Helmet")
-            if zone.require_glasses and person.has_glasses is not True:
-                zone_violations.append("Glasses")
-            if zone.id in ("work_floor", "restricted") and person.metadata.get("has_yellow_vest") is False:
-                zone_violations.append("Vest")
-
-            person.metadata["zone_violations"] = zone_violations
-
-            for violation in zone_violations:
+            for violation in required_violations:
                 alert_key = f"zone_{zone.id}_{violation}"
                 if self._debounced(person.person_id, alert_key):
                     continue
