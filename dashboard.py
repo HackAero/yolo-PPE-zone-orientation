@@ -5,7 +5,7 @@ import pandas as pd
 import time
 from src.engine import SafetyPipelineEngine
 from src.session_labels import worker_label
-from main import render_annotations
+from main import render_annotations, SupervisorReplayRecorder, build_critical_event
 
 # Set page config
 st.set_page_config(
@@ -96,6 +96,7 @@ if run_pipeline:
     engine.privacy_stage.use_mock = use_mock
     
     stream = engine.stream_frames()
+    replay = SupervisorReplayRecorder()
     
     # Store running alert history
     alert_history = []
@@ -115,6 +116,14 @@ if run_pipeline:
             
             # Redact and annotate the processed frame
             render_annotations(frame_data)
+
+            # Critical event replay capture (same behavior as OpenCV main.py path)
+            event = build_critical_event(frame_data)
+            if event is not None:
+                replay.trigger(frame_data.timestamp, event)
+
+            replay.draw_overlay(frame_data.processed_frame, frame_data.timestamp)
+            replay.add_frame(frame_data.timestamp, frame_data.processed_frame)
             
             # Streamlit needs RGB image format, cv2 operates on BGR
             rgb_frame = cv2.cvtColor(frame_data.processed_frame, cv2.COLOR_BGR2RGB)
