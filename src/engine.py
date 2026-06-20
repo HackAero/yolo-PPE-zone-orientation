@@ -8,7 +8,7 @@ from src.compliance import PPEComplianceChecker
 from src.environment import EnvironmentBehaviorMonitor
 from src.privacy import PrivacyAnonymizer
 from src.mock_data import MockPipelineGenerator
-from src.ppe import HelmetDetector, helmet_inside_person
+from src.ppe import HelmetDetector, helmet_inside_person, GlassesDetector, glasses_inside_person
 
 
 class SafetyPipelineEngine:
@@ -25,9 +25,12 @@ class SafetyPipelineEngine:
         self.privacy_stage = PrivacyAnonymizer(use_mock=use_mock)
 
         # Helmet detector.
-        # For now this points to yolov8n.pt, which does NOT really detect helmets.
-        # Later replace with: models/helmet_best.pt
-        self.helmet_detector = HelmetDetector("yolov8n.pt")
+        # Uses trained PPE model for accurate detection
+        self.helmet_detector = HelmetDetector(config.PPE_MODEL_PATH)
+
+        # Glasses detector.
+        # Uses trained PPE model for accurate detection
+        self.glasses_detector = GlassesDetector(config.PPE_MODEL_PATH)
 
         if self.use_mock:
             self.mock_generator = MockPipelineGenerator()
@@ -48,10 +51,10 @@ class SafetyPipelineEngine:
         # Step 1: Detect and track people
         frame_data = self.tracker_stage.process(frame_data)
 
-        # Step 2: Existing PPE compliance logic
+        # Step 2: Existing PPE compliance logic (detects helmets & glasses)
         frame_data = self.compliance_stage.process(frame_data)
 
-        # Step 3: Helmet check
+        # Step 3: Helmet check (from ppe_model via direct detector for extra validation)
         helmet_boxes = self.helmet_detector.detect_helmets(frame_data.raw_frame)
 
         for person in frame_data.persons:
@@ -62,9 +65,28 @@ class SafetyPipelineEngine:
                     has_helmet = True
                     break
 
-            if not has_helmet:
-                if "NO HELMET" not in person.compliance_violations:
-                    person.compliance_violations.append("NO HELMET")
+            # Update if we detected a helmet (in case compliance stage missed it)
+            if has_helmet and person.has_helmet is None:
+                person.has_helmet = True
+            elif not has_helmet and person.has_helmet is None:
+                person.has_helmet = False
+
+        # Step 3.5: Glasses check (from ppe_model via direct detector for extra validation)
+        glasses_boxes = self.glasses_detector.detect_glasses(frame_data.raw_frame)
+
+        for person in frame_data.persons:
+            has_glasses = False
+
+            for glasses_box in glasses_boxes:
+                if glasses_inside_person(person.bbox, glasses_box):
+                    has_glasses = True
+                    break
+
+            # Update if we detected glasses (in case compliance stage missed it)
+            if has_glasses and person.has_glasses is None:
+                person.has_glasses = True
+            elif not has_glasses and person.has_glasses is None:
+                person.has_glasses = False
 
         # Step 4: Environment / fall detection
         frame_data = self.environment_stage.process(frame_data)
