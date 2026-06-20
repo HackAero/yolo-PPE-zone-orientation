@@ -5,3 +5,4 @@ mediapipe==0.10.14
 numpy==1.26.4
 streamlit
 pillow
+paho-mqtt>=1.6.1

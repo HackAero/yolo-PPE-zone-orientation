@@ -8,6 +8,7 @@ from src.compliance import PPEComplianceChecker
 from src.environment import EnvironmentBehaviorMonitor
 from src.face_detection import SharedFaceDetector
 from src.frame_utils import preprocess_camera_frame
+from src.dispatcher import RobotDispatcher
 from src.mock_data import MockPipelineGenerator
 from src.pipeline_types import FrameData
 from src.ppe_inference import SharedPPEDetector
@@ -30,6 +31,7 @@ class SafetyPipelineEngine:
         self.compliance_stage = PPEComplianceChecker(use_mock=use_mock)
         self.environment_stage = EnvironmentBehaviorMonitor(use_mock=use_mock)
         self.privacy_stage = PrivacyAnonymizer(use_mock=use_mock)
+        self.dispatcher = RobotDispatcher()
         self._frame_grabber: Optional[LatestFrameGrabber] = None
 
         if self.use_mock:
@@ -121,6 +123,14 @@ class SafetyPipelineEngine:
         frame_data = self.environment_stage.process(frame_data)
         stage_ms["environment"] = int((time.time() - t0) * 1000)
 
+        for person in frame_data.persons:
+            if person.is_fallen:
+                self.dispatcher.send(alert_type="FALL_DETECTED", person_id=person.person_id)
+            if "Helmet" in person.compliance_violations:
+                self.dispatcher.send(alert_type="NO_HELMET", person_id=person.person_id)
+            if "Glasses" in person.compliance_violations:
+                self.dispatcher.send(alert_type="NO_GLASSES", person_id=person.person_id)
+
         self._ensure_processed_frame(frame_data)
         if not self.use_mock and frame_data.processed_frame is frame_data.raw_frame:
             frame_data.processed_frame = frame_data.raw_frame.copy()
@@ -188,6 +198,7 @@ class SafetyPipelineEngine:
 
     def release(self):
         self.running = False
+        self.dispatcher.shutdown()
 
         if self._frame_grabber is not None:
             self._frame_grabber.stop()
