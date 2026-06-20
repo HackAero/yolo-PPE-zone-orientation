@@ -33,10 +33,10 @@ def helmet_inside_person(person_bbox, helmet_bbox):
     px1, py1, px2, py2 = person_bbox
     hx1, hy1, hx2, hy2, _ = helmet_bbox
 
-    helmet_center_x = (hx1 + hx2) // 2
-    helmet_center_y = (hy1 + hy2) // 2
     person_height = py2 - py1
-    top_region_bottom = py1 + int(0.55 * person_height)
+    top_limit = py1 + int(person_height * 0.55)
+    center_x = (hx1 + hx2) // 2
+    center_y = (hy1 + hy2) // 2
 
     overlap_x1 = max(px1, hx1)
     overlap_y1 = max(py1, hy1)
@@ -48,11 +48,7 @@ def helmet_inside_person(person_bbox, helmet_bbox):
     helmet_area = max(1, (hx2 - hx1) * (hy2 - hy1))
     overlap_ratio = overlap_area / helmet_area
 
-    return (
-        px1 <= helmet_center_x <= px2
-        and py1 <= helmet_center_y <= top_region_bottom
-        and overlap_ratio >= 0.05
-    )
+    return px1 <= center_x <= px2 and py1 <= center_y <= top_limit and overlap_ratio >= 0.05
 
 
 class GlassesDetector:
@@ -81,10 +77,10 @@ def glasses_inside_person(person_bbox, glasses_bbox):
     px1, py1, px2, py2 = person_bbox
     gx1, gy1, gx2, gy2, _ = glasses_bbox
 
-    glasses_center_x = (gx1 + gx2) // 2
-    glasses_center_y = (gy1 + gy2) // 2
     person_height = py2 - py1
-    top_region_bottom = py1 + int(0.45 * person_height)
+    top_limit = py1 + int(person_height * 0.45)
+    center_x = (gx1 + gx2) // 2
+    center_y = (gy1 + gy2) // 2
 
     overlap_x1 = max(px1, gx1)
     overlap_y1 = max(py1, gy1)
@@ -96,8 +92,4 @@ def glasses_inside_person(person_bbox, glasses_bbox):
     glasses_area = max(1, (gx2 - gx1) * (gy2 - gy1))
     overlap_ratio = overlap_area / glasses_area
 
-    return (
-        px1 <= glasses_center_x <= px2
-        and py1 <= glasses_center_y <= top_region_bottom
-        and overlap_ratio >= 0.05
-    )
+    return px1 <= center_x <= px2 and py1 <= center_y <= top_limit and overlap_ratio >= 0.05

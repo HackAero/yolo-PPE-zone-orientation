@@ -31,14 +31,54 @@ def render_annotations(frame_data):
     overlay = frame.copy()
     
     post_blend_text = []
+
+    ppe_debug = frame_data.extra_metadata.get("ppe_debug", {})
+    helmet_boxes = ppe_debug.get("helmet_boxes", []) if isinstance(ppe_debug, dict) else []
+    glasses_boxes = ppe_debug.get("glasses_boxes", []) if isinstance(ppe_debug, dict) else []
+    raw_detections = ppe_debug.get("raw_detections", []) if isinstance(ppe_debug, dict) else []
+
+    for x1, y1, x2, y2, conf in helmet_boxes:
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(frame, f"HELMET {conf:.2f}", (x1, max(15, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+
+    for x1, y1, x2, y2, conf in glasses_boxes:
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 0), 2)
+        cv2.putText(frame, f"GOGGLES {conf:.2f}", (x1, max(15, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+
+    for item in raw_detections:
+        if not isinstance(item, (list, tuple)) or len(item) != 6:
+            continue
+        label, x1, y1, x2, y2, conf = item
+        label_text = str(label).upper()
+        raw_color = (0, 255, 0) if label_text == "HELMET" else (255, 255, 0) if label_text == "GOGGLES" else (180, 180, 180)
+        cv2.putText(
+            frame,
+            f"{label_text} RAW {conf:.2f}",
+            (x1, min(h - 12, y2 + 14)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            raw_color,
+            1,
+        )
+
+    if helmet_boxes or glasses_boxes:
+        legend = "PPE DEBUG: green=helmet  cyan=goggles"
+        (lw, lh), _ = cv2.getTextSize(legend, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+        cv2.rectangle(frame, (10, h - lh - 22), (10 + lw + 14, h - 10), (0, 0, 0), -1)
+        cv2.putText(frame, legend, (17, h - 17), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (235, 235, 235), 1)
+        if raw_detections:
+            raw_legend = f"RAW DETECTIONS: {len(raw_detections)}"
+            (rw, rh), _ = cv2.getTextSize(raw_legend, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            cv2.rectangle(frame, (10, h - lh - rh - 30), (10 + rw + 14, h - lh - 26), (0, 0, 0), -1)
+            cv2.putText(frame, raw_legend, (17, h - lh - 33), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (235, 235, 235), 1)
     
     # 1. Draw Bounding Boxes and Labels for Tracked Persons
     for person in frame_data.persons:
         xmin, ymin, xmax, ymax = person.bbox
         
         is_safe = True
-        status_text = f"ID {person.person_id}"
-        color = (200, 200, 200) # Soft white/gray for safe
+        status_text = f"ID {person.person_id} | SAFE"
+        color = (0, 200, 0)  # Green for safe
         
         if person.is_fallen:
             color = (0, 0, 255)  # Red
@@ -49,7 +89,7 @@ def render_annotations(frame_data):
             viols = []
             if "Helmet" in person.compliance_violations: viols.append("NO HELMET")
             if "Glasses" in person.compliance_violations: viols.append("NO GLASSES")
-            status_text = f"ID {person.person_id} | {','.join(viols)}"
+            status_text = f"ID {person.person_id} | UNSAFE: {', '.join(viols)}"
             is_safe = False
 
         if is_safe:

@@ -101,6 +101,12 @@ class SafetyPipelineEngine:
             )
             stage_ms["ppe_yolo"] = int((time.time() - t0) * 1000)
             stage_ms["ppe_assign"] = 0
+            frame_data.extra_metadata["ppe_debug"] = {
+                "helmet_boxes": ppe_result.helmet_boxes,
+                "glasses_boxes": ppe_result.glasses_boxes,
+                "raw_detections": ppe_result.raw_detections,
+                "model_available": ppe_result.model_available,
+            }
 
             if not ppe_result.model_available:
                 for person in frame_data.persons:
@@ -110,6 +116,12 @@ class SafetyPipelineEngine:
             t0 = time.time()
             self.face_detector.populate_frame_cache(frame_data)
             stage_ms["face_detect"] = int((time.time() - t0) * 1000)
+            frame_data.extra_metadata["ppe_debug"] = {
+                "helmet_boxes": [],
+                "glasses_boxes": [],
+                "raw_detections": [],
+                "model_available": False,
+            }
         else:
             stage_ms["ppe_yolo"] = 0
             stage_ms["ppe_assign"] = 0
