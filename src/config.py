@@ -1,9 +1,9 @@
 import os
 
 # --- Performance / Inference ---
-FAST_MODE = False
-# Balanced live-feed tuning: smoother CPU playback with modest accuracy tradeoffs.
-SMOOTH_MODE = True
+FAST_MODE = True
+# Keep the PPE path simple and responsive.
+SMOOTH_MODE = False
 
 YOLO_DEVICE = "cpu"
 
@@ -11,12 +11,12 @@ if FAST_MODE:
     YOLO_IMGSZ = 320
     YOLO_MODEL_PATH = "yolov8n.pt"
     CAMERA_MAX_WIDTH = 480
-    PPE_INFERENCE_INTERVAL = 3
+    PPE_INFERENCE_INTERVAL = 1
     PERSON_DETECT_INTERVAL = 2
     FACE_DETECT_INTERVAL = 4
     POSE_INFERENCE_INTERVAL = 4
     SMOKE_INFERENCE_INTERVAL = 6
-    COMPLIANCE_HEURISTIC_INTERVAL = 3
+    COMPLIANCE_HEURISTIC_INTERVAL = 1
     ASYNC_FRAME_GRAB = True
 elif SMOOTH_MODE:
     YOLO_IMGSZ = 384
@@ -54,7 +54,7 @@ CAMERA_BRIGHTNESS = 20  # 0 is default, >0 increases brightness
 
 # --- Confidence & Detection Thresholds ---
 PERSON_CONF_THRESHOLD = 0.45
-PPE_CONF_THRESHOLD = 0.5
+PPE_CONF_THRESHOLD = 0.2
 
 # --- Privacy Settings (Person 3) ---
 PRIVACY_BLUR_KERNEL_SIZE = (57, 57)  # Higher values = stronger blur
