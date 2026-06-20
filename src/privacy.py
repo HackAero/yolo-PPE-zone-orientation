@@ -253,47 +253,41 @@ class PrivacyAnonymizer:
                 )
             # --- Local Tattoo Segmentation & Privacy Redaction ---
             if config.BLUR_TATOOS:
+                run_tattoo = getattr(frame_data, "frame_index", 0) % 5 == 0
+
                 for limb_roi in build_tattoo_rois(person, detection_frame.shape):
                     limb_xmin, limb_ymin, limb_xmax, limb_ymax = limb_roi["bbox"]
-                    limb_crop = detection_frame[
-                        limb_ymin:limb_ymax,
-                        limb_xmin:limb_xmax,
-                    ]
+                    limb_key = f"tattoo_{limb_roi['side']}_{limb_roi['segment']}"
 
                     try:
                         if self.tattoo_detector is None:
                             raise RuntimeError("Tattoo detector is not initialized")
 
-                        tattoo_mask = self.tattoo_detector.detect_mask(limb_crop)
-                        blurred = self._blur_masked_region(
-                            frame,
-                            limb_roi["bbox"],
-                            tattoo_mask,
-                        )
-                        if blurred:
-                            tattoo_blur_regions += 1
-                        elif config.TATTOO_FAIL_CLOSED:
-                            if self._blur_region(
-                                frame,
-                                limb_xmin,
-                                limb_ymin,
-                                limb_xmax,
-                                limb_ymax,
-                            ):
-                                tattoo_blur_regions += 1
+                        if run_tattoo and not self.use_mock:
+                            limb_crop = detection_frame[
+                                limb_ymin:limb_ymax,
+                                limb_xmin:limb_xmax,
+                            ]
+                            tattoo_mask = self.tattoo_detector.detect_mask(limb_crop)
+                            has_tattoo = bool(np.any(tattoo_mask))
+                            person.metadata[limb_key] = has_tattoo
+                            
+                            if has_tattoo:
+                                blurred = self._blur_masked_region(frame, limb_roi["bbox"], tattoo_mask)
+                                if blurred:
+                                    tattoo_blur_regions += 1
+                        else:
+                            has_tattoo = person.metadata.get(limb_key, False)
+                            if has_tattoo:
+                                if self._blur_region(frame, limb_xmin, limb_ymin, limb_xmax, limb_ymax):
+                                    tattoo_blur_regions += 1
+
                     except Exception as error:
-                        print(
-                            f"[Privacy] Tattoo inference failed for worker "
-                            f"{person.person_id}: {error}"
-                        )
+                        # Only print errors occasionally to avoid console spam in mock mode
+                        if getattr(frame_data, "frame_index", 0) % 30 == 0:
+                            print(f"[Privacy] Tattoo inference failed for worker {person.person_id}: {error}")
                         if config.TATTOO_FAIL_CLOSED:
-                            if self._blur_region(
-                                frame,
-                                limb_xmin,
-                                limb_ymin,
-                                limb_xmax,
-                                limb_ymax,
-                            ):
+                            if self._blur_region(frame, limb_xmin, limb_ymin, limb_xmax, limb_ymax):
                                 tattoo_blur_regions += 1
 
         for person_id in list(self.face_cache):

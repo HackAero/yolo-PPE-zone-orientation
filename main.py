@@ -442,7 +442,7 @@ def main():
     print("=" * 50 + "\n")
 
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_name, 1800, 1350)
+    cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
     try:
         for frame_data in stream:
