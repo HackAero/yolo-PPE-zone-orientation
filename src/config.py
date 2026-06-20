@@ -17,10 +17,10 @@ if FAST_MODE:
     PPE_INFERENCE_INTERVAL = 2
     PPE_CROP_PASS = False
     PPE_CROP_MAX_PERSONS = 0
-    PERSON_DETECT_INTERVAL = 1
+    PERSON_DETECT_INTERVAL = 2
     FACE_DETECT_INTERVAL = 4
-    POSE_INFERENCE_INTERVAL = 1
-    SMOKE_INFERENCE_INTERVAL = 1
+    POSE_INFERENCE_INTERVAL = 4
+    SMOKE_INFERENCE_INTERVAL = 6
     COMPLIANCE_HEURISTIC_INTERVAL = 1
     ASYNC_FRAME_GRAB = True
 elif SMOOTH_MODE:
@@ -93,7 +93,7 @@ SMOKE_CONFIRMATION_FRAMES = 1       # Threshold for consecutive smoke alerts to 
 FIRE_CONFIRMATION_FRAMES = 1        # Threshold for consecutive fire alerts to be sure  
 
 FALL_ANGLE_THRESHOLD = 50           # Angle (degrees) of spine relative to vertical (e.g. > 60 = horizontal/lying)
-FALL_CONFIRMATION_FRAMES = 1        # Number of consecutive frames required to confirm a fall
+FALL_CONFIRMATION_FRAMES = 2        # Number of consecutive frames required to confirm a fall
 KEYPOINT_CONFIDENCE_THRESHOLD = 0.35 # Minimum confidence for pose keypoints to be used
 FALL_ASPECT_RATIO_THRESHOLD = 1.75   # Width/height ratio threshold for aspect ratio fallback detection
 
