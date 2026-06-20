@@ -76,8 +76,7 @@ streamlit run dashboard.py
 
 Robot dispatch demo (vision → MQTT → dummy rover → dashboard):
 ```bash
-pip install paho-mqtt   # required for MQTT dispatch
-python robot_sim.py     # terminal 1: fake rover
+python robot_sim.py     # terminal 1: dummy rover
 python main.py --mock   # terminal 2: vision pipeline
 # open robot_dashboard.html in a browser
 ```
