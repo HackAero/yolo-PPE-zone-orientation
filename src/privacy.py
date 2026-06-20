@@ -36,7 +36,7 @@ class PrivacyAnonymizer:
         ymax = max(0, min(ymax, h - 1))
 
         if xmax <= xmin or ymax <= ymin:
-            return
+            return False
 
         roi = frame[ymin:ymax, xmin:xmax]
         kw, kh = config.PRIVACY_BLUR_KERNEL_SIZE
@@ -45,6 +45,7 @@ class PrivacyAnonymizer:
 
         blurred_roi = cv2.GaussianBlur(roi, (kw, kh), 0)
         frame[ymin:ymax, xmin:xmax] = blurred_roi
+        return True
 
     def _blur_masked_region(self, frame, bbox, mask):
         """Blur only mask-selected pixels inside a full-frame bounding box."""
@@ -56,7 +57,7 @@ class PrivacyAnonymizer:
         ymax = max(0, min(int(ymax), h))
 
         if xmax <= xmin or ymax <= ymin:
-            return
+            return False
 
         roi = frame[ymin:ymax, xmin:xmax]
         if mask.shape != roi.shape[:2]:
@@ -67,13 +68,14 @@ class PrivacyAnonymizer:
             ).astype(bool)
 
         if not np.any(mask):
-            return
+            return False
 
         kw, kh = config.PRIVACY_BLUR_KERNEL_SIZE
         kw = kw if kw % 2 == 1 else kw + 1
         kh = kh if kh % 2 == 1 else kh + 1
         blurred_roi = cv2.GaussianBlur(roi, (kw, kh), 0)
         roi[mask] = blurred_roi[mask]
+        return True
 
     def _to_relative_bbox(self, face_bbox, person_bbox):
         fxmin, fymin, fxmax, fymax = face_bbox
@@ -145,8 +147,11 @@ class PrivacyAnonymizer:
     def process(self, frame_data: FrameData) -> FrameData:
         frame = frame_data.processed_frame
         detection_frame = frame_data.raw_frame
-        h_img, w_img = frame.shape[:2]
         active_person_ids = set()
+        tattoo_blur_regions = 0
+
+        frame_data.extra_metadata["privacy_tattoo_blur_enabled"] = bool(config.BLUR_TATOOS)
+        frame_data.extra_metadata["privacy_tattoo_detector_ready"] = bool(self.tattoo_detector is not None)
 
         for person in frame_data.persons:
             xmin, ymin, xmax, ymax = person.bbox
@@ -201,24 +206,26 @@ class PrivacyAnonymizer:
                             raise RuntimeError("Tattoo detector is not initialized")
 
                         tattoo_mask = self.tattoo_detector.detect_mask(limb_crop)
-                        self._blur_masked_region(
+                        if self._blur_masked_region(
                             frame,
                             limb_roi["bbox"],
                             tattoo_mask,
-                        )
+                        ):
+                            tattoo_blur_regions += 1
                     except Exception as error:
                         print(
                             f"[Privacy] Tattoo inference failed for worker "
                             f"{person.person_id}: {error}"
                         )
                         if config.TATTOO_FAIL_CLOSED:
-                            self._blur_region(
+                            if self._blur_region(
                                 frame,
                                 limb_xmin,
                                 limb_ymin,
                                 limb_xmax,
                                 limb_ymax,
-                            )
+                            ):
+                                tattoo_blur_regions += 1
 
         for person_id in list(self.face_cache):
             if person_id in active_person_ids:
@@ -226,5 +233,7 @@ class PrivacyAnonymizer:
             self.face_cache[person_id]["missing_frames"] += 1
             if self.face_cache[person_id]["missing_frames"] > config.PRIVACY_FACE_CACHE_FRAMES:
                 del self.face_cache[person_id]
+
+        frame_data.extra_metadata["privacy_tattoo_regions_blurred"] = int(tattoo_blur_regions)
 
         return frame_data

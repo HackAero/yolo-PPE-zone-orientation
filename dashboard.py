@@ -69,9 +69,11 @@ with col_analytics:
     with m_col1:
         current_workers_metric = st.empty()
         safety_rating_metric = st.empty()
+        fire_alarm_metric = st.empty()
     with m_col2:
         unique_total_metric = st.empty()
         fps_metric = st.empty()
+        tattoo_blur_metric = st.empty()
         
     st.divider()
     st.subheader("⚠️ Active Safety Violations & Alerts")
@@ -153,6 +155,30 @@ if run_pipeline:
             
             fps = frame_data.extra_metadata.get("fps", 0)
             fps_metric.metric("Engine Performance", f"{fps} FPS", f"{frame_data.extra_metadata.get('latency_ms', 0)} ms/frame")
+
+            fire_active = bool(frame_data.is_fire_detected or frame_data.is_smoke_detected)
+            fire_alarm_metric.metric(
+                "Fire Alarm",
+                "ACTIVE" if fire_active else "Clear",
+                delta="SMOKE/FIRE" if fire_active else "No hazard",
+                delta_color="inverse" if fire_active else "off",
+            )
+
+            tattoo_enabled = bool(frame_data.extra_metadata.get("privacy_tattoo_blur_enabled", False))
+            tattoo_ready = bool(frame_data.extra_metadata.get("privacy_tattoo_detector_ready", False))
+            tattoo_regions = int(frame_data.extra_metadata.get("privacy_tattoo_regions_blurred", 0) or 0)
+            tattoo_status = "OFF"
+            if tattoo_enabled and tattoo_ready:
+                tattoo_status = f"ON ({tattoo_regions})"
+            elif tattoo_enabled and not tattoo_ready:
+                tattoo_status = "ON (MODEL MISSING)"
+
+            tattoo_blur_metric.metric(
+                "Tattoo Blur",
+                tattoo_status,
+                delta=f"{tattoo_regions} regions/frame" if tattoo_enabled and tattoo_ready else None,
+                delta_color="off",
+            )
             
             # Parse alerts and maintain a small list of unique alerts
             for alert in frame_data.alerts:
@@ -193,7 +219,8 @@ if run_pipeline:
                     "Worker ID": worker_label(p.person_id),
                     "Posture Status": status_symbol,
                     "Hard Hat": helmet_symbol,
-                    "Safety Eyewear": glasses_symbol
+                    "Safety Eyewear": glasses_symbol,
+                    "Tattoo Privacy": "🟢 Active" if tattoo_enabled and tattoo_ready else ("🟠 Enabled (No Model)" if tattoo_enabled else "⚪ Off"),
                 })
                 
             if manifest_data:
