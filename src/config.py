@@ -1,9 +1,52 @@
 import os
 
+# --- Performance / Inference ---
+FAST_MODE = False
+# Balanced live-feed tuning: smoother CPU playback with modest accuracy tradeoffs.
+SMOOTH_MODE = True
+
+YOLO_DEVICE = "cpu"
+
+if FAST_MODE:
+    YOLO_IMGSZ = 320
+    YOLO_MODEL_PATH = "yolov8n.pt"
+    CAMERA_MAX_WIDTH = 480
+    PPE_INFERENCE_INTERVAL = 3
+    PERSON_DETECT_INTERVAL = 2
+    FACE_DETECT_INTERVAL = 4
+    POSE_INFERENCE_INTERVAL = 4
+    SMOKE_INFERENCE_INTERVAL = 6
+    COMPLIANCE_HEURISTIC_INTERVAL = 3
+    ASYNC_FRAME_GRAB = True
+elif SMOOTH_MODE:
+    YOLO_IMGSZ = 384
+    YOLO_MODEL_PATH = "yolov8s.pt"
+    CAMERA_MAX_WIDTH = 640
+    PPE_INFERENCE_INTERVAL = 2
+    PERSON_DETECT_INTERVAL = 2
+    FACE_DETECT_INTERVAL = 3
+    POSE_INFERENCE_INTERVAL = 3
+    SMOKE_INFERENCE_INTERVAL = 5
+    COMPLIANCE_HEURISTIC_INTERVAL = 2
+    ASYNC_FRAME_GRAB = True
+else:
+    YOLO_IMGSZ = 416
+    YOLO_MODEL_PATH = "yolov8s.pt"
+    CAMERA_MAX_WIDTH = 0
+    PPE_INFERENCE_INTERVAL = 1
+    PERSON_DETECT_INTERVAL = 1
+    FACE_DETECT_INTERVAL = 1
+    POSE_INFERENCE_INTERVAL = 2
+    SMOKE_INFERENCE_INTERVAL = 3
+    COMPLIANCE_HEURISTIC_INTERVAL = 1
+    ASYNC_FRAME_GRAB = False
+
+REID_INFERENCE_INTERVAL = 2
+REID_STABLE_TRACK_FRAMES = 5
+
 # --- Model Configurations ---
-# Paths to model weights (put your customized/pre-trained models in the models/ folder)
-YOLO_MODEL_PATH = "yolov8s.pt"  # Upgraded to small model for better detection
-PPE_MODEL_PATH = "models/ppe_model.pt"   # Custom safety gear model (e.g. helmets/glasses)
+PPE_MODEL_PATH = "models/ppe_model.pt"
+POSE_MODEL_PATH = "yolov8n-pose.pt"
 
 # --- Camera Pre-processing ---
 CAMERA_CONTRAST = 1.2   # 1.0 is default, >1.0 increases contrast

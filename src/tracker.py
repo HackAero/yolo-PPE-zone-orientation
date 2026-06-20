@@ -24,6 +24,10 @@ class PersonTracker:
         Falls back to spatial HSV color histograms if PyTorch is unavailable or fails.
         """
         self.use_mock = use_mock
+        self._frame_counter = 0
+        self._track_stable_frames: Dict[int, int] = {}
+        self._last_embeddings: Dict[int, np.ndarray] = {}
+        self._last_persons_snapshot: List[TrackedPerson] = []
         if not use_mock:
             print(f"[Tracker] Initializing YOLO model: {config.YOLO_MODEL_PATH}")
             self.model = YOLO(config.YOLO_MODEL_PATH)
@@ -209,9 +213,39 @@ class PersonTracker:
 
         # --- REAL DETECTION AND TRACKING PIPELINE ---
         frame = frame_data.raw_frame
+
+        self._frame_counter += 1
+        run_detection = (self._frame_counter - 1) % config.PERSON_DETECT_INTERVAL == 0
+
+        if not run_detection and self._last_persons_snapshot:
+            frame_data.persons = [
+                TrackedPerson(
+                    person_id=person.person_id,
+                    bbox=list(person.bbox),
+                    confidence=person.confidence,
+                    has_helmet=person.has_helmet,
+                    has_glasses=person.has_glasses,
+                    compliance_violations=list(person.compliance_violations),
+                    is_fallen=person.is_fallen,
+                    keypoints=person.keypoints,
+                    embedding=person.embedding,
+                    reid_matched=person.reid_matched,
+                    metadata=dict(person.metadata),
+                )
+                for person in self._last_persons_snapshot
+            ]
+            frame_data.current_people_count = len(frame_data.persons)
+            frame_data.total_unique_people = len(self.confirmed_ids)
+            return frame_data
         
         # Run inference
-        results = self.model(frame, conf=config.PERSON_CONF_THRESHOLD, verbose=False)[0]
+        results = self.model(
+            frame,
+            conf=config.PERSON_CONF_THRESHOLD,
+            imgsz=config.YOLO_IMGSZ,
+            device=config.YOLO_DEVICE,
+            verbose=False,
+        )[0]
         
         # Convert results to supervision format
         detections = sv.Detections.from_ultralytics(results)
@@ -247,11 +281,28 @@ class PersonTracker:
                 ymax = max(0, min(ymax, h_max - 1))
                 
                 crop = frame[ymin:ymax, xmin:xmax]
-                embedding = self._extract_embedding(crop)
-                
+
+                if track_id in self.track_id_to_persistent_id:
+                    pid = self.track_id_to_persistent_id[track_id]
+                    stable_frames = self._track_stable_frames.get(track_id, 0) + 1
+                    self._track_stable_frames[track_id] = stable_frames
+
+                    skip_reid = (
+                        stable_frames >= config.REID_STABLE_TRACK_FRAMES
+                        and (self._frame_counter - 1) % config.REID_INFERENCE_INTERVAL != 0
+                        and pid in self._last_embeddings
+                    )
+
+                    if skip_reid:
+                        embedding = self._last_embeddings[pid]
+                    else:
+                        embedding = self._extract_embedding(crop)
+                        self._last_embeddings[pid] = embedding
+                else:
+                    embedding = self._extract_embedding(crop)
+
                 # Resolve ByteTrack ID to persistent ID using ReID cache
                 if track_id in self.track_id_to_persistent_id:
-                    # Person is continuously tracked in session
                     pid = self.track_id_to_persistent_id[track_id]
                     
                     # Diverse Caching: Only add new signature if it's visually distinct (> 0.92 similar means too identical)
@@ -282,18 +333,18 @@ class PersonTracker:
                         if is_distinct:
                             self.embedding_cache[pid].append(embedding)  # deque auto-evicts at maxlen=50
                                 
-                        active_persistent_ids.add(pid)  # Mark as active
-                        self.confirmed_ids.add(pid)     # Ensure counted (should already be present)
-                        print(f"[Tracker] Re-ID Success: Re-mapped track {track_id} to ID {pid}")
+                        active_persistent_ids.add(pid)
+                        self.confirmed_ids.add(pid)
+                        self._last_embeddings[pid] = embedding
                     else:
-                        # New unique person
                         pid = self.next_persistent_id
                         self.next_persistent_id += 1
                         self.track_id_to_persistent_id[track_id] = pid
-                        self.embedding_cache[pid] = deque([embedding], maxlen=50)  # deque: O(1) bounded cache
-                        active_persistent_ids.add(pid)  # Mark as active
-                        self.confirmed_ids.add(pid)     # Register in ground-truth unique-visitor set
-                        print(f"[Tracker] Registered New Unique Visitor: ID {pid}")
+                        self.embedding_cache[pid] = deque([embedding], maxlen=50)
+                        active_persistent_ids.add(pid)
+                        self.confirmed_ids.add(pid)
+                        self._track_stable_frames[track_id] = 0
+                        self._last_embeddings[pid] = embedding
                 
                 person = TrackedPerson(
                     person_id=pid,
@@ -305,7 +356,8 @@ class PersonTracker:
         
         frame_data.persons = active_persons
         frame_data.current_people_count = len(active_persons)
-        frame_data.total_unique_people = len(self.confirmed_ids)  # Accurate: counts confirmed unique visitors only
+        frame_data.total_unique_people = len(self.confirmed_ids)
+        self._last_persons_snapshot = active_persons
         
         return frame_data
 
