@@ -175,6 +175,17 @@
       gap: 24px;
     }
 
+    @keyframes siren-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); border-color: var(--border); }
+      50% { box-shadow: 0 0 20px 5px rgba(239, 68, 68, 0.6); border-color: var(--red); }
+      100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); border-color: var(--border); }
+    }
+
+    .siren-active {
+      animation: siren-pulse 1s infinite;
+      background: rgba(239, 68, 68, 0.05) !important;
+    }
+
     #hero-card {
       background: var(--bg-card);
       border: 1px solid var(--border);
@@ -486,6 +497,7 @@
       <button onclick="triggerTest('FALL_DETECTED')">Simulate Fall</button>
       <button onclick="triggerTest('NO_HELMET')">Simulate No Helmet</button>
       <button onclick="triggerTest('NO_GLASSES')">Simulate No Glasses</button>
+      <button onclick="triggerTest('FIRE_DETECTED')">Simulate Fire</button>
       <button onclick="triggerTestReset()">Reset</button>
     </div>
   </div>
@@ -534,6 +546,19 @@
         <div class="stat-label">Last Team</div>
         <div class="stat-value" id="stat-team">&mdash;</div>
         <div class="stat-unit">signal origin</div>
+      </div>
+      <div class="stat-card" id="robot-card" style="border-color: var(--emerald); transition: all 0.3s ease;">
+        <div class="stat-label">Robot Live Status</div>
+        <div class="stat-value" id="robot-state" style="font-size: 20px;">IDLE</div>
+        <div style="display: flex; justify-content: space-between; margin-top: 4px;">
+          <div class="stat-unit">Zone: <span id="robot-zone">—</span></div>
+          <div class="stat-unit" id="robot-eta" style="font-weight: bold;"></div>
+        </div>
+        <div class="stat-unit" id="robot-action" style="color: var(--amber); margin-top: 4px; font-style: italic; min-height: 14px;"></div>
+        
+        <div style="height: 4px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden;">
+          <div id="robot-progress-fill" style="height: 100%; width: 0%; background: var(--emerald); transition: width 0.5s linear;"></div>
+      </div>
       </div>
     </div>
 
@@ -608,65 +633,79 @@
     client.on('connect', () => {
       setConnectionStatus('connected', 'Connected');
       client.subscribe(MQTT_TOPIC, { qos: 1 });
+      client.subscribe('hackatum/robot/status', { qos: 1 }); 
     });
+
     client.on('reconnect', () => setConnectionStatus('connecting', 'Reconnecting…'));
     client.on('error', () => setConnectionStatus('error', 'Error'));
     client.on('offline', () => setConnectionStatus('connecting', 'Offline…'));
 
     client.on('message', (topic, message) => {
-      if (topic !== MQTT_TOPIC) return;
-      let payload;
-     try { payload = JSON.parse(message.toString()); } catch(e) { return; }
-
-    const { team_id='?', zone_id='?', alert_type='UNKNOWN', person_id='?', person_label, timestamp } = payload;
-    const personDisplay = person_label || ('#' + person_id);
-    const time = timestamp ? new Date(timestamp * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
-
-      totalDispatches++;
-      statTotal.textContent = totalDispatches;
-    statZone.textContent  = zone_id;
-    statTeam.textContent  = team_id;
-
-    let severity = 'ppe';
-    if (alert_type === 'FALL_DETECTED') severity = 'fall';
-    else if (alert_type === 'RESTRICTED_ENTRY') severity = 'restricted';
-
-    triggerHeroAlert(team_id, zone_id, personDisplay, alert_type, severity);
-    appendLogRow(time, team_id, zone_id, alert_type, personDisplay);
-      });
-
-    // Subscribe to robot status
-    client.on('message', (topic, message) => {
-      // ... existing dispatch handler ...
-
+      
+      // 1. Handle incoming robot status updates
       if (topic === 'hackatum/robot/status') {
         try {
           const status = JSON.parse(message.toString());
           updateRobotStatus(status);
-        } catch (e) { }
+        } catch (e) { 
+          console.error("Status parse error:", e);
+        }
+        return; // Stop here so it doesn't trigger the dispatch code
+      }
+
+      // 2. Handle incoming vision pipeline dispatches
+      if (topic === MQTT_TOPIC) {
+        let payload;
+        try { payload = JSON.parse(message.toString()); } catch(e) { return; }
+
+        const { team_id='?', zone_id='?', alert_type='UNKNOWN', person_id='?', person_label, timestamp } = payload;
+        const personDisplay = person_label || ('#' + person_id);
+        const time = timestamp ? new Date(timestamp * 1000).toLocaleTimeString() : new Date().toLocaleTimeString();
+
+        totalDispatches++;
+        statTotal.textContent = totalDispatches;
+        statZone.textContent  = zone_id;
+        statTeam.textContent  = team_id;
+
+        let severity = 'ppe';
+        if (alert_type === 'FALL_DETECTED') severity = 'fall';
+        else if (alert_type === 'RESTRICTED_ENTRY') severity = 'restricted';
+        else if (alert_type === 'FIRE_DETECTED') severity = 'fire';
+
+        triggerHeroAlert(team_id, zone_id, personDisplay, alert_type, severity);
+        appendLogRow(time, team_id, zone_id, alert_type, personDisplay);
       }
     });
 
-    function updateRobotStatus(status) {
+  function updateRobotStatus(status) {
+      const cardEl = document.getElementById('robot-card');
       const stateEl = document.getElementById('robot-state');
       const zoneEl = document.getElementById('robot-zone');
       const etaEl = document.getElementById('robot-eta');
+      const actionEl = document.getElementById('robot-action');
       const progressFill = document.getElementById('robot-progress-fill');
 
       const state = status.status || 'IDLE';
       const zone = status.zone || '—';
       const eta = status.eta || 0;
-
+      
+      // Update basic text
       stateEl.textContent = state;
       zoneEl.textContent = zone;
+      actionEl.textContent = status.action || '';
 
+      // Toggle the cool CSS siren
+      if (status.siren) {
+        cardEl.classList.add('siren-active');
+      } else {
+        cardEl.classList.remove('siren-active');
+      }
+
+      // Handle the state colors and progress bar
       if (state === 'EN_ROUTE') {
         stateEl.style.color = '#f59e0b'; // amber
         etaEl.textContent = `ETA ${eta}s`;
-        progressFill.style.width = '100%';
-        // Animate progress bar over time (we'll simulate by counting down)
-        // We'll use a separate interval to decrease width.
-        // For simplicity, we'll just set width to 100% and let it decay with a timer.
+        
         if (window.robotTimer) clearInterval(window.robotTimer);
         let remaining = eta;
         progressFill.style.width = '100%';
@@ -679,16 +718,16 @@
             progressFill.style.width = '0%';
           }
         }, 500);
-      } else if (state === 'ARRIVED') {
-        stateEl.style.color = '#10b981'; // emerald
-        etaEl.textContent = 'On Scene';
-        progressFill.style.width = '100%';
-        if (window.robotTimer) clearInterval(window.robotTimer);
-        // auto-reset after a few seconds? Or handle via next status.
-      } else {
+      } else if (state === 'IDLE') {
         stateEl.style.color = '#a1a1aa'; // idle
         etaEl.textContent = '';
         progressFill.style.width = '0%';
+        if (window.robotTimer) clearInterval(window.robotTimer);
+      } else {
+        // Any on-scene active state (ARRIVED, ASSESSING, WARNING, etc.)
+        stateEl.style.color = '#10b981'; // emerald
+        etaEl.textContent = 'On Scene';
+        progressFill.style.width = '100%';
         if (window.robotTimer) clearInterval(window.robotTimer);
       }
     }
@@ -705,7 +744,12 @@
         heroIcon.textContent = '🚨';
         heroStatusLabel.textContent = 'FALL DETECTED!';
         heroSubtext.textContent = 'Robot dispatching to Zone ' + zone;
-           } else if (severity === 'restricted') {
+      }else if (severity === 'fire') {
+        heroCard.classList.add('alert');
+        heroIcon.textContent = '🔥';
+        heroStatusLabel.textContent = 'FIRE DETECTED!';
+        heroSubtext.textContent = 'EVACUATE IMMEDIATELY — Zone ' + zone;
+      } else if (severity === 'restricted') {
       heroCard.classList.add('alert');
       heroIcon.textContent = '⛔';
       heroStatusLabel.textContent = 'RESTRICTED ENTRY';
@@ -751,7 +795,7 @@
       <td>${esc(time)}</td>
       <td><strong>${esc(String(team))}</strong></td>
       <td>${esc(String(zone))}</td>
-      <td><span class="badge ${alertType === 'FALL_DETECTED' ? 'badge-fall' : alertType === 'RESTRICTED_ENTRY' ? 'badge-fall' : 'badge-ppe'}">${esc(String(alertType))}</span></td>
+      <td><span class="badge ${ (alertType === 'FALL_DETECTED' || alertType === 'FIRE_DETECTED' || alertType === 'RESTRICTED_ENTRY') ? 'badge-fall' : 'badge-ppe'}"></td>
       <td>${esc(String(person))}</td>
     `;
     logTableBody.insertBefore(tr, logTableBody.firstChild);

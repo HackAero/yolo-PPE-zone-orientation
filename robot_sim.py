@@ -8,6 +8,7 @@ Publishes status updates for the dashboard.
 import json
 import time
 import random
+import threading
 import paho.mqtt.client as mqtt
 
 # Configuration
@@ -72,49 +73,97 @@ class RobotSimulator:
         if alert_type.upper() in ("FIRE_DETECTED", "SMOKE_DETECTED"):
             self.scream(alert_type, zone, person_id)
 
-        self.dispatch(alert_type, zone, person_id)
+        # Run dispatch in a background thread so it doesn't freeze the MQTT loop
+        threading.Thread(target=self.dispatch, args=(alert_type, zone, person_id), daemon=True).start()
+
+        # self.dispatch(alert_type, zone, person_id)
 
     def dispatch(self, alert_type, zone, person_id):
         print(f"[Robot] 📨 Received {alert_type} for Person {person_id} in Zone {zone}")
         self.state = EN_ROUTE
         self.current_zone = zone
 
-        # Simulate travel time (3-7 seconds)
-        travel_time = random.uniform(5, 10)
-        eta = int(travel_time)
-
-        # Publish status: EN_ROUTE
+        # 1. Travel Phase
+        travel_time = random.uniform(4, 7)
         status_msg = {
             "status": "EN_ROUTE",
             "zone": zone,
-            "eta": eta,
+            "eta": int(travel_time),
             "alert_type": alert_type,
-            "person_id": person_id,
+            "action": "Navigating to scene...",
+            "siren": alert_type in ("FALL_DETECTED", "RESTRICTED_ENTRY", "FIRE_DETECTED"), # Turn on siren for criticals
             "timestamp": time.time()
         }
         self.publish_status(status_msg)
-
         time.sleep(travel_time)
 
-        # Arrived
+        # 2. Arrival Phase
         self.state = ARRIVED
         status_msg["status"] = "ARRIVED"
         status_msg["eta"] = 0
+        status_msg["siren"] = False # Turn off travel siren
+        status_msg["action"] = "Securing area..."
         self.publish_status(status_msg)
-        print(f"[Robot] Arrived at Zone {zone}")
+        time.sleep(2)
 
-        # Simulate on-scene work (2-4 seconds)
-        time.sleep(random.uniform(6, 7))
+        # 3. On-Scene Action Phase (Based on alert type)
+        if alert_type == "FALL_DETECTED":
+            status_msg["status"] = "ASSESSING"
+            status_msg["action"] = "Scanning worker vitals..."
+            self.publish_status(status_msg)
+            time.sleep(3)
+            
+            status_msg["status"] = "ALERTING"
+            status_msg["action"] = "Calling Medical Rescue!"
+            status_msg["siren"] = True 
+            self.publish_status(status_msg)
+            time.sleep(3)
+            
+        elif alert_type in ("FIRE_DETECTED", "SMOKE_DETECTED"):         
+            status_msg["status"] = "ALERTING"
+            status_msg["action"] = "Calling Fire Department!"
+            status_msg["siren"] = True 
+            self.publish_status(status_msg)
+            time.sleep(2)
+            
+            status_msg["status"] = "INVESTIGATING"
+            status_msg["action"] = "Recording video log..."
+            self.publish_status(status_msg)
+            time.sleep(3)
+            
+            status_msg["status"] = "EVACUATING"
+            status_msg["action"] = "Remove Robot from Fire/Smoke Zone"
+            self.publish_status(status_msg)
+            time.sleep(4)
+            
+        elif alert_type in ("NO_HELMET", "NO_GLASSES"):
+            status_msg["status"] = "WARNING"
+            status_msg["action"] = "Playing audio warning..."
+            self.publish_status(status_msg)
+            time.sleep(4)
+            
+            status_msg["status"] = "RESOLVING"
+            status_msg["action"] = "Worker is now compliant."
+            self.publish_status(status_msg)
+            time.sleep(2)
+            
+        else:
+            status_msg["status"] = "INVESTIGATING"
+            status_msg["action"] = "Recording video log..."
+            self.publish_status(status_msg)
+            time.sleep(4)
 
-        # Return to idle
+        # 4. Return to Base
         self.state = IDLE
         self.current_zone = None
         status_msg["status"] = "IDLE"
         status_msg["zone"] = None
-        status_msg["eta"] = 0
+        status_msg["action"] = "Awaiting orders"
+        status_msg["siren"] = False
         self.publish_status(status_msg)
-        print(f"[Robot] Back to IDLE")
-
+        print(f"[Robot] Task complete. Back to IDLE.")
+        
+        
     def publish_status(self, data):
         self.client.publish(STATUS_TOPIC, json.dumps(data), qos=1)
         # Also print for console visibility
