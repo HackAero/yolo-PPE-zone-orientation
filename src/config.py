@@ -31,7 +31,7 @@ KEYPOINT_CONFIDENCE_THRESHOLD = 0.35 # Minimum confidence for pose keypoints to 
 FALL_ASPECT_RATIO_THRESHOLD = 1.75   # Width/height ratio threshold for aspect ratio fallback detection
 
 # --- Re-Identification settings (Person 2) ---
-REID_COSINE_SIMILARITY_THRESHOLD = 0.88  # Extremely strict match to tell identical uniforms apart
+REID_COSINE_SIMILARITY_THRESHOLD = 0.78  # Balanced threshold: strict enough to separate similar uniforms, loose enough to match re-entries
 
 # --- Directory Paths ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

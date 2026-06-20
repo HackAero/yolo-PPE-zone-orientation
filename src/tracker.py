@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
-from typing import Dict, List, Optional, Set
+from collections import deque
+from typing import Deque, Dict, List, Optional, Set
 import supervision as sv
 from ultralytics import YOLO
 from src.pipeline_types import FrameData, TrackedPerson
@@ -28,14 +29,17 @@ class PersonTracker:
             self.model = YOLO(config.YOLO_MODEL_PATH)
             self.tracker = sv.ByteTrack()
             
-            # Re-ID database: maps persistent_id -> list of visual embeddings
-            self.embedding_cache: Dict[int, List[np.ndarray]] = {}
+            # Re-ID database: maps persistent_id -> deque of visual embeddings (max 50, auto-evicts oldest)
+            self.embedding_cache: Dict[int, Deque[np.ndarray]] = {}
             
             # Session maps: maps temporary byte_track ID to persistent_id
             self.track_id_to_persistent_id: Dict[int, int] = {}
             
-            # Running counter for new unique people
+            # Running counter for new unique people (used only for ID assignment)
             self.next_persistent_id = 1
+            
+            # Ground-truth set of all unique person IDs ever confirmed — used for cumulative count
+            self.confirmed_ids: Set[int] = set()
             
             # Initialize MobileNetV3 CNN Re-ID model
             self.reid_model = None
@@ -162,26 +166,31 @@ class PersonTracker:
         """
         Queries the embedding cache to find if this visual signature matches
         a previously seen person who is currently NOT visible in the frame.
+        
+        Uses top-3 mean scoring per candidate to reduce noise from outlier
+        embeddings — a single lucky match is no longer enough to claim a re-ID.
         """
         best_match_id = None
         best_score = -1.0
         
-        # Use config threshold
         threshold = config.REID_COSINE_SIMILARITY_THRESHOLD
         
         for pid, embeddings in self.embedding_cache.items():
             # Skip matching if this person ID is currently visible in the room
             if pid in exclude_ids:
                 continue
-                
-            # Check against stored embeddings for this ID
-            for cached_emb in embeddings:
-                sim = self._cosine_similarity(new_embedding, cached_emb)
-                if sim > best_score:
-                    best_score = sim
-                    best_match_id = pid
+            
+            # Compute cosine similarity against every stored embedding for this person
+            scores = [self._cosine_similarity(new_embedding, cached_emb) for cached_emb in embeddings]
+            
+            # Rank scores and average the top-3 to smooth out noise
+            top_scores = sorted(scores, reverse=True)[:3]
+            candidate_score = sum(top_scores) / len(top_scores)
+            
+            if candidate_score > best_score:
+                best_score = candidate_score
+                best_match_id = pid
                     
-        # Verify if similarity is above the resolved threshold
         if best_score >= threshold:
             return best_match_id
         return None
@@ -246,6 +255,7 @@ class PersonTracker:
                     pid = self.track_id_to_persistent_id[track_id]
                     
                     # Diverse Caching: Only add new signature if it's visually distinct (> 0.92 similar means too identical)
+                    # The deque has maxlen=50 and evicts the oldest entry automatically — no manual pop needed
                     is_distinct = True
                     for cached_emb in self.embedding_cache[pid]:
                         if self._cosine_similarity(embedding, cached_emb) > 0.92:
@@ -254,9 +264,6 @@ class PersonTracker:
                             
                     if is_distinct:
                         self.embedding_cache[pid].append(embedding)
-                        # Keep up to 50 distinct profiles (covers ~360 degree rotation)
-                        if len(self.embedding_cache[pid]) > 50:
-                            self.embedding_cache[pid].pop(0)
                             
                 else:
                     # New track ID detected. Try to match it to a past persistent_id (re-entry check)
@@ -273,19 +280,19 @@ class PersonTracker:
                                 is_distinct = False
                                 break
                         if is_distinct:
-                            self.embedding_cache[pid].append(embedding)
-                            if len(self.embedding_cache[pid]) > 50:
-                                self.embedding_cache[pid].pop(0)
+                            self.embedding_cache[pid].append(embedding)  # deque auto-evicts at maxlen=50
                                 
                         active_persistent_ids.add(pid)  # Mark as active
+                        self.confirmed_ids.add(pid)     # Ensure counted (should already be present)
                         print(f"[Tracker] Re-ID Success: Re-mapped track {track_id} to ID {pid}")
                     else:
                         # New unique person
                         pid = self.next_persistent_id
                         self.next_persistent_id += 1
                         self.track_id_to_persistent_id[track_id] = pid
-                        self.embedding_cache[pid] = [embedding]
+                        self.embedding_cache[pid] = deque([embedding], maxlen=50)  # deque: O(1) bounded cache
                         active_persistent_ids.add(pid)  # Mark as active
+                        self.confirmed_ids.add(pid)     # Register in ground-truth unique-visitor set
                         print(f"[Tracker] Registered New Unique Visitor: ID {pid}")
                 
                 person = TrackedPerson(
@@ -298,7 +305,7 @@ class PersonTracker:
         
         frame_data.persons = active_persons
         frame_data.current_people_count = len(active_persons)
-        frame_data.total_unique_people = self.next_persistent_id - 1
+        frame_data.total_unique_people = len(self.confirmed_ids)  # Accurate: counts confirmed unique visitors only
         
         return frame_data
 
