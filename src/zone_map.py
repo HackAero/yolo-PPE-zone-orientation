@@ -115,10 +115,10 @@ class ZoneMonitor:
     def cycle_layout(self) -> str:
         modes = [
             "startup", 
-            "marker_0_far", "marker_0_close", 
-            "marker_1_far", "marker_1_close",
-            "marker_2_far", "marker_2_close",
-            "marker_3_far", "marker_3_close"
+            "marker_0_close", "marker_0_far", 
+            "marker_1_close", "marker_1_far",
+            "marker_2_close", "marker_2_far",
+            "marker_3_close", "marker_3_far"
         ]
         if self.current_mode in modes:
             idx = modes.index(self.current_mode)
