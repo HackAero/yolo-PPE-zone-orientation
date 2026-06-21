@@ -82,7 +82,7 @@ class RobotDispatcher:
         # Fire off our "wow factor" hackathon notifications
         if alert_type in ["FALL_DETECTED", "RESTRICTED_ENTRY"]:
             msg = "Warning. Critical Fall Detected in Sector A." if alert_type == "FALL_DETECTED" else "Warning. Unauthorized access in restricted zone."
-            self._trigger_wow_factor(msg)
+            self._trigger_wow_factor(msg, alert_type)
 
         payload = {
             "team_id": config.TEAM_ID,
@@ -178,8 +178,8 @@ class RobotDispatcher:
     # Hackathon "Wow Factor" Notifications
     # ------------------------------------------------------------------
 
-    def _trigger_wow_factor(self, message: str) -> None:
-        if getattr(config, "ENABLE_TTS_SIREN", False):
+    def _trigger_wow_factor(self, message: str, alert_type: str) -> None:
+        if getattr(config, "ENABLE_TTS_SIREN", False) and alert_type == "FALL_DETECTED":
             self._play_tts(message)
         if getattr(config, "ENABLE_TWILIO_SMS", False):
             self._send_twilio_sms(message)
