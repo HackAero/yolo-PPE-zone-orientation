@@ -27,7 +27,7 @@ if FAST_MODE:
     PERSON_DETECT_INTERVAL = 3
     FACE_DETECT_INTERVAL = 2
     POSE_INFERENCE_INTERVAL = 4
-    SMOKE_INFERENCE_INTERVAL = 4
+    SMOKE_INFERENCE_INTERVAL = 5
     COMPLIANCE_HEURISTIC_INTERVAL = 2
     ASYNC_FRAME_GRAB = True
 elif SMOOTH_MODE:
@@ -41,7 +41,7 @@ elif SMOOTH_MODE:
     PERSON_DETECT_INTERVAL = 2
     FACE_DETECT_INTERVAL = 3
     POSE_INFERENCE_INTERVAL = 5
-    SMOKE_INFERENCE_INTERVAL = 10
+    SMOKE_INFERENCE_INTERVAL = 6
     COMPLIANCE_HEURISTIC_INTERVAL = 2
     ASYNC_FRAME_GRAB = True
 else:
@@ -55,7 +55,7 @@ else:
     PERSON_DETECT_INTERVAL = 1
     FACE_DETECT_INTERVAL = 1
     POSE_INFERENCE_INTERVAL = 2
-    SMOKE_INFERENCE_INTERVAL = 3
+    SMOKE_INFERENCE_INTERVAL = 5
     COMPLIANCE_HEURISTIC_INTERVAL = 1
     ASYNC_FRAME_GRAB = False
 
@@ -136,8 +136,8 @@ LEG_ROI_MIN_PADDING = 12            # Minimum leg ROI padding in pixels
 
 # --- Quality & Safety Settings (Person 5) ---
 BLUR_LAPLACIAN_THRESHOLD = 20.0     # Under this value, image is flagged as blurry/smudged
-SMOKE_CONF_THRESHOLD = 0.45          # Threshold for environmental smoke detection
-FIRE_CONF_THRESHOLD = 0.45           # Threshold for environmental fire detection
+SMOKE_CONF_THRESHOLD = 0.58          # Threshold for environmental smoke detection
+FIRE_CONF_THRESHOLD = 0.54           # Threshold for environmental fire detection
 SMOKE_CONFIRMATION_FRAMES = 1       # Threshold for consecutive smoke alerts to be sure  
 FIRE_CONFIRMATION_FRAMES = 1        # Threshold for consecutive fire alerts to be sure  
 
