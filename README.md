@@ -1,8 +1,14 @@
 # MTU Smart Safety Monitoring
 
-Real-time computer vision for an industrial floor. It counts personnel, checks PPE compliance, spots falls and fire, blurs faces and sensitive information, and pings an autonomous rover when something goes critically wrong. 
+Real-time computer vision for an industrial floor. Built for **MTU Aero Engines** at Hackatum.
 
-Built for **MTU Aero Engines** at Hackatum.
+**Tech Stack:** `Python` `YOLOv8` `ByteTrack` `OpenCV` `MQTT` `Vanilla HTML/JS`
+
+### Key Features
+* **Contextual PPE Tracking:** Enforces helmet/glasses rules based on dynamic zones.
+* **Hazard Detection:** Real-time fall and smoke/fire detection.
+* **Privacy First:** Real-time face (and tattoo) blurring for GDPR compliance.
+* **Autonomous Dispatch:** Zero-backend MQTT alerts to a rover dashboard.
 
 ---
 
@@ -25,9 +31,9 @@ Additionally, we faced the hackathon constraint. We were a team of five with onl
 
 Our path looked somewhat like this:
 
-1. We started by building a **core pipeline**. Tracking people (YOLO + ByteTrack), checking PPE, watching for falls and fire, bluring faces on output, dispatching alerts over MQTT to a dummy rover and creating a browser dashboard. That had to run on a laptop CPU, so we built `SMOOTH_MODE` and `FAST_MODE` (smaller models, skip heavy frames, async camera grab).
+1. We started by building a **core pipeline**. Tracking people (YOLO + ByteTrack), checking PPE, watching for falls and fire, blurring faces on output, dispatching alerts over MQTT to a dummy rover and creating a browser dashboard. That had to run on a laptop CPU, so we built `SMOOTH_MODE` and `FAST_MODE` (smaller models, skip heavy frames, async camera grab).
 2. The **spatial challenge**. MTU cares about *location* and we do too. Our first version used static vertical bands in `zones/*.json` (with the left side being safe, centre being the work zone and the right being restricted). It was simple enough, but it was glued to the camera, so if you remount the cam, the entire “factory” moves.
-3. The **pragmatic leap**. We wanted to *show* different zone layouts live (all yellow, red/green splits, etc.) without a floor map. We introduced OpenCV ArUco marker detection via `zone_map.py`. We flash a fiducial marker and its ID picks which wall the rover or camera is facing; estimated distance picks “close” vs “far” layout. The layout locks when the marker leaves frame so the demo does not flicker much. While this approach is not production-ready, it provided a practical and effective way to communicate zone behavior on the exhibition floor.
+3. The **pragmatic leap**. We wanted to *show* different zone layouts live (all yellow, red/green splits, etc.) without a floor map. We introduced OpenCV ArUco marker detection via `zone_map.py`. We flash a fiducial marker and its ID picks which wall the rover or camera is facing; estimated distance picks “close” vs “far” layout. The layout locks when the marker leaves frame to ensure a stable presentation. While this approach is not production-ready, it provided a practical and effective way to communicate zone behavior on the exhibition floor.
 4. **Testing it live** exposed critical edge cases. Smoke detection fired too often, so we slowed inference intervals and added multi-frame alert verification (`alert_filter.py`) plus a **LIMITED** HUD mode when the image is blurry or noisy (critical alerts still go out, but PPE spam to the robot is throttled). PPE heuristics falsely called bare hair “helmet”, so we now trust the YOLO model instead.
 5. **Robot handoff without a server**. To demonstrate a complete industrial automation loop without managing a heavy backend server, we use public MQTT (HiveMQ). We send real-time alerts to a light `robot_dashboard.html` that can be opened in any browser and a `robot_sim.py` routine, that instantly dispatches commands to a future rover.
 
@@ -126,7 +132,7 @@ python robot_sim.py
 # Terminal 2: vision pipeline (w = cycle layouts, g = Garfield/blur, q = quit)
 python main.py --source 0
 ```
-To open the dashboard on your browser, simply double-click on `robot_dashboard.html`.
+To open the dashboard on your browser, simply double-click on `robot_dashboard.html` (it uses HiveMQ's public broker, so it can be opened on any device, not just the machine running the script).
 
 MQTT topics: `hackatum/robot/dispatch`, `hackatum/robot/status`
 
