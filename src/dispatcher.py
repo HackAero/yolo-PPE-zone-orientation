@@ -181,18 +181,49 @@ class RobotDispatcher:
     def _trigger_wow_factor(self, message: str) -> None:
         if getattr(config, "ENABLE_TTS_SIREN", False):
             self._play_tts(message)
+        if getattr(config, "ENABLE_TWILIO_SMS", False):
+            self._send_twilio_sms(message)
 
     def _play_tts(self, message: str) -> None:
         def _play_mp3():
             try:
                 import pygame
-                pygame.mixer.music.load(r"C:\Users\noell\Documents\Code\hackatum\data\spongebobalarm.mp3")
+                import os
+                # Dynamically get the absolute path to the project root
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                mp3_path = os.path.join(base_dir, "images", "spongebobalarm.mp3")
+                
+                pygame.mixer.music.load(mp3_path)
                 pygame.mixer.music.play()
                 while pygame.mixer.music.get_busy():
                     pygame.time.Clock().tick(10)
             except Exception as e:
                 print(f"[Dispatcher] MP3 playback failed: {e}")
         t = threading.Thread(target=_play_mp3)
+        t.daemon = True
+        t.start()
+
+    def _send_twilio_sms(self, message: str) -> None:
+        def _send():
+            try:
+                from twilio.rest import Client
+                account_sid = config.TWILIO_ACCOUNT_SID
+                auth_token = config.TWILIO_AUTH_TOKEN
+                if not account_sid or not auth_token:
+                    print("[Dispatcher] Twilio keys missing in .env. Skipping SMS.")
+                    return
+
+                client = Client(account_sid, auth_token)
+                
+                msg = client.messages.create(
+                    body=f"{message} Dispatching emergency rover immediately.",
+                    to=config.TWILIO_TO_NUMBER,
+                    from_=config.TWILIO_FROM_NUMBER
+                )
+                print(f"[Dispatcher] [OK] Twilio SMS sent: {msg.sid}")
+            except Exception as e:
+                print(f"[Dispatcher] Twilio SMS failed: {e}")
+        t = threading.Thread(target=_send)
         t.daemon = True
         t.start()
 

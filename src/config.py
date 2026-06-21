@@ -1,5 +1,12 @@
 import os
 from typing import Optional
+import platform
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # --- Performance / Inference ---
 # FAST_MODE: tuned for laptop CPU + webcam (skip frames, smaller YOLO input).
@@ -89,6 +96,11 @@ PPE_CONFIRM_FRAMES = 1
 # "WOW FACTOR" HACKATHON NOTIFICATIONS
 # ==============================================================================
 ENABLE_TTS_SIREN = True
+ENABLE_TWILIO_SMS = os.getenv("ENABLE_TWILIO_SMS", "False").lower() == "true"
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "")
+TWILIO_TO_NUMBER = os.getenv("TWILIO_TO_NUMBER", "")
 
 # ==============================================================================
 # PIPELINE STAGES & SCHEDULING
