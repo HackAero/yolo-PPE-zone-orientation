@@ -33,6 +33,7 @@ Our path looked somewhat like this:
 3. The **pragmatic leap**. We wanted to *show* different zone layouts live (all yellow, red/green splits, etc.) without a floor map. We introduced OpenCV ArUco marker detection via `zone_map.py`. We flash a fiducial marker and its ID picks which wall the rover or camera is facing; estimated distance picks “close” vs “far” layout. The layout locks when the marker leaves frame so the demo does not flicker much. While this approach is not production-ready, it provided a practical and effective way to communicate zone behavior on the exhibition floor.
 
 <img width="1918" height="1078" alt="image" src="https://github.com/user-attachments/assets/cc02fb44-7fd5-46b6-87e4-2fe387d51bb0" />
+<img width="1055" height="572" alt="image" src="https://github.com/user-attachments/assets/21cca04b-6a30-4e00-9439-3d8a245c9bb2" />
 
 4. **Testing it live** exposed critical edge cases. Smoke detection fired too often, so we slowed inference intervals and added multi-frame alert verification (`alert_filter.py`) plus a **LIMITED** HUD mode when the image is blurry or noisy (critical alerts still go out, but PPE spam to the robot is throttled). PPE heuristics falsely called bare hair “helmet”, so we now trust the YOLO model instead.
 
